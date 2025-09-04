@@ -6,6 +6,27 @@ import tempfile
 import urllib.parse
 import os
 
+import logging
+
+# Ensure log directory exists
+os.makedirs('/home/docker/tmp/mr-validator-logs', exist_ok=True)
+
+# Generate unique log filename per container
+container_id = os.environ.get('HOSTNAME', 'unknown')
+log_filename = f'/home/docker/tmp/mr-validator-logs/rate-my-mr-{container_id}.log'
+
+# Setup logging for rate_my_mr_gitlab
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(filename)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(log_filename),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 from . import gitlab
 from .rate_my_mr import (
     generate_summary, generate_initial_code_review,
@@ -20,7 +41,7 @@ HEADER = """\
 """
 
 
-def create_diff_from_mr(proj, mriid, checkout_dir):
+def create_diff_from_mr(proj, mriid, checkout_dir, mr_data, mrcommits):
     """
     Create a git diff file from MR data for analysis
 
@@ -34,7 +55,7 @@ def create_diff_from_mr(proj, mriid, checkout_dir):
     """
     print(f"[DEBUG] Creating diff for MR {mriid} in project {proj}")
     print(f"[DEBUG] Working directory: {checkout_dir}")
-    
+
     try:
         # Check current branch and remotes
         print("[DEBUG] Checking git status...")
@@ -43,15 +64,16 @@ def create_diff_from_mr(proj, mriid, checkout_dir):
             print(f"[DEBUG] Available branches:\n{branches}")
         except subprocess.CalledProcessError as e:
             print(f"[DEBUG] Could not list branches: {e}")
-        
-        # Get diff between MR base and head
-        print("[DEBUG] Attempting git diff origin/master...HEAD")
+
+        # Get diff between MR base and head using target branch
+        target_branch = mr_data.target_branch
+        print(f"[DEBUG] Attempting git diff {target_branch}...HEAD")
         diff_output = subprocess.check_output([
-            "git", "diff", "--no-color", "origin/master...HEAD"
+            "git", "diff", "--no-color", f"{target_branch}...HEAD"
         ], cwd=checkout_dir).decode("utf-8")
 
         print(f"[DEBUG] Generated diff length: {len(diff_output)} characters")
-        
+
         # Save diff to temporary file
         diff_file_path = os.path.join(checkout_dir, "mr_diff.txt")
         with open(diff_file_path, 'w') as diff_file:
@@ -59,18 +81,18 @@ def create_diff_from_mr(proj, mriid, checkout_dir):
 
         print(f"[DEBUG] Saved diff to: {diff_file_path}")
         print(f"[DEBUG] Diff file exists: {os.path.exists(diff_file_path)}")
-        
+
         return diff_file_path
 
     except subprocess.CalledProcessError as e:
         print(f"[DEBUG] Primary diff method failed: {e}")
         print(f"[DEBUG] Attempting fallback diff methods...")
-        # Fallback: create diff between first and last commit
+        # Fallback: create diff using commit-based approach
         try:
-            print("[DEBUG] Fetching commit list from GitLab API...")
-            mrcommits = gitlab.gitlab("/projects/{}/merge_requests/{}/commits".format(proj, mriid))
+            print("[DEBUG] Using commit list from GitLab API...")
+            # Get commits from the MR data we already fetched
             print(f"[DEBUG] Found {len(mrcommits)} commits in MR")
-            
+
             if len(mrcommits) >= 2:
                 first_commit = mrcommits[0].id
                 last_commit = mrcommits[-1].id
@@ -87,7 +109,7 @@ def create_diff_from_mr(proj, mriid, checkout_dir):
                 ], cwd=checkout_dir).decode("utf-8")
 
             print(f"[DEBUG] Fallback diff generated, length: {len(diff_output)} characters")
-            
+
             diff_file_path = os.path.join(checkout_dir, "mr_diff.txt")
             with open(diff_file_path, 'w') as diff_file:
                 diff_file.write(diff_output)
@@ -216,6 +238,20 @@ def handle_mr(proj, mriid):
         proj: Project identifier (URL-encoded)
         mriid: Merge request IID
     """
+
+    logger.info("===== STARTING MR ANALYSIS =====")
+    logger.info(f"GitLab host configured as: {gitlab.GITLAB_HOST}")
+    logger.info(f"Project: {proj}")
+    logger.info(f"MR IID: {mriid}")
+    try:
+        gitlab_token = os.environ.get('GITLAB_ACCESS_TOKEN', '')
+        token_available = bool(gitlab_token)
+        logger.info(f"Environment check - GITLAB_ACCESS_TOKEN available: {token_available}")
+        if token_available:
+            logger.info(f"Token starts with: {gitlab_token[:10]}...")
+    except Exception as e:
+        logger.error(f"Error checking environment: {e}")
+        token_available = False
     
     print("[DEBUG] ===== STARTING MR ANALYSIS =====")
     print(f"[DEBUG] Project: {proj}")
@@ -230,11 +266,11 @@ def handle_mr(proj, mriid):
         print(f"[DEBUG] MR state: {mr.state}")
         print(f"[DEBUG] Source branch: {mr.source_branch}")
         print(f"[DEBUG] Target branch: {mr.target_branch}")
-        
+
         print("[DEBUG] Fetching MR commits...")
         mrcommits = gitlab.gitlab("/projects/{}/merge_requests/{}/commits".format(proj, mr.iid))
         print(f"[DEBUG] Found {len(mrcommits)} commits in MR {mriid}")
-        
+
         for i, commit in enumerate(mrcommits):
             print(f"[DEBUG] Commit {i+1}: {commit.id[:8]} - {commit.title}")
 
@@ -250,16 +286,20 @@ def handle_mr(proj, mriid):
 
         print("[DEBUG] Initializing git repository...")
         subprocess.call(["git", "init", "-q"], cwd=tdir)
-        
+
         clone_url = gitlab.get_clone_url(proj.replace('%2F', '/'))
         print(f"[DEBUG] Clone URL: {clone_url}")
-        print(f"[DEBUG] Fetching MR head: merge-requests/{mr.iid}/head")
-        
+        print(f"[DEBUG] Target branch: {mr.target_branch}")
+        print(f"[DEBUG] Source branch: {mr.source_branch}")
+        print(f"[DEBUG] Fetching MR head: merge-requests/{mr.iid}/head and target branch: {mr.target_branch}")
+
         try:
+            # Fetch both MR head and target branch for proper diff
             subprocess.call(["git", "fetch", "-q",
                              "--depth={}".format(max(len(mrcommits), 100)),
                              clone_url,
-                             "merge-requests/{}/head".format(mr.iid)],
+                             "merge-requests/{}/head".format(mr.iid),
+                             "{}:{}".format(mr.target_branch, mr.target_branch)],
                             cwd=tdir)
             print("[DEBUG] Git fetch completed successfully")
         except Exception as fetch_error:
@@ -275,7 +315,7 @@ def handle_mr(proj, mriid):
 
         # Create diff file for analysis
         print("[DEBUG] Creating diff file for analysis...")
-        diff_file_path = create_diff_from_mr(proj, mriid, tdir)
+        diff_file_path = create_diff_from_mr(proj, mriid, tdir, mr, mrcommits)
 
         if not diff_file_path or not os.path.exists(diff_file_path):
             print("[DEBUG] ERROR: Could not create diff file for analysis")
@@ -361,14 +401,14 @@ Please check the MR manually and retry if necessary.
     print("[DEBUG] Step 7: Posting results to GitLab...")
     try:
         gitlab.update_discussion(proj, mriid, HEADER, report_body, must_not_be_resolved)
-        print("[DEBUG] ✅ Successfully posted report to GitLab")
+        print("[DEBUG] Successfully posted report to GitLab")
     except Exception as gitlab_error:
-        print(f"[DEBUG] ❌ Failed to post to GitLab: {gitlab_error}")
+        print(f"[DEBUG] Failed to post to GitLab: {gitlab_error}")
         print(f"[DEBUG] Error type: {type(gitlab_error).__name__}")
         raise
-    
+
     print("[DEBUG] ===== MR ANALYSIS COMPLETED =====")
-    print("✅ MR quality assessment completed successfully")
+    print("MR quality assessment completed successfully")
 
 
 def main():

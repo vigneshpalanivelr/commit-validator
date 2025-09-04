@@ -1,494 +1,685 @@
 # MR Validator - Automated GitLab Merge Request Validation
 
-A comprehensive merge request validation system that automatically checks code formatting and commit message standards for GitLab projects. The system receives webhook events from GitLab and performs validation in isolated Docker containers.
+A comprehensive merge request validation system that automatically checks code formatting, commit message standards, and performs AI-powered quality assessment for GitLab projects. The system receives webhook events from GitLab and performs validation in isolated Docker containers.
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [System Overview](#system-overview)
-- [High-Volume Processing Behavior](#high-volume-processing-behavior)
-  - [Concurrent Load Scenario - 100 Merge Request Events](#concurrent-load-scenario---100-merge-request-events)
-  - [Detailed Processing Flow](#detailed-processing-flow)
-  - [System Behavior Characteristics](#system-behavior-characteristics)
-  - [Timeline Analysis](#timeline-analysis)
-  - [Performance Characteristics](#performance-characteristics)
-- [Components](#components)
-  - [webhook-server - HTTP Webhook Handler](#webhook-server---http-webhook-handler)
-  - [mrproper - Validation Library](#mrproper---validation-library)
-- [Installation & Setup](#installation--setup)
-- [Usage Examples](#usage-examples)
-- [Validation Results](#validation-results)
-- [Development Workflow Integration](#development-workflow-integration)
-- [Security Considerations](#security-considerations)
-- [Monitoring & Logging](#monitoring--logging)
-- [Future Enhancement Areas](#future-enhancement-areas)
+- [MR Validator - Automated GitLab Merge Request Validation](#mr-validator---automated-gitlab-merge-request-validation)
+  - [Table of Contents](#table-of-contents)
+  - [Quick Start](#quick-start)
+    - [Prerequisites](#prerequisites)
+    - [1. Build Docker Images](#1-build-docker-images)
+    - [2. Configure Environment](#2-configure-environment)
+      - [Automated CI/CD Setup (Recommended)](#automated-cicd-setup-recommended)
+      - [Manual Setup (Local Development)](#manual-setup-local-development)
+    - [3. Start Server](#3-start-server)
+    - [4. Configure GitLab Webhook](#4-configure-gitlab-webhook)
+  - [System Overview](#system-overview)
+  - [Installation \& Setup](#installation--setup)
+    - [Build Process](#build-process)
+      - [Dependencies](#dependencies)
+      - [Automated Deployment Flow](#automated-deployment-flow)
+    - [Configuration Files](#configuration-files)
+      - [Environment Configuration (`mrproper.env`)](#environment-configuration-mrproperenv)
+      - [Project-Specific Configuration (`.mr-proper.conf`)](#project-specific-configuration-mr-properconf)
+    - [Directory Structure](#directory-structure)
+  - [Configuration](#configuration)
+    - [GitLab Webhook Configuration](#gitlab-webhook-configuration)
+      - [Single Validator](#single-validator)
+      - [Multiple Validators](#multiple-validators)
+    - [Supported Validators](#supported-validators)
+  - [Usage](#usage)
+    - [Development Workflow Integration](#development-workflow-integration)
+      - [For Developers](#for-developers)
+      - [For Repository Maintainers](#for-repository-maintainers)
+    - [Example API Calls](#example-api-calls)
+  - [Validation Types](#validation-types)
+    - [1. Code Formatting (`mrproper-clang-format`)](#1-code-formatting-mrproper-clang-format)
+      - [Results Format](#results-format)
+    - [2. Commit Message Validation (`mrproper-message`)](#2-commit-message-validation-mrproper-message)
+      - [Results Format](#results-format-1)
+    - [3. AI Quality Assessment (`rate-my-mr`)](#3-ai-quality-assessment-rate-my-mr)
+      - [Results Format](#results-format-2)
+  - [Integration Guide](#integration-guide)
+    - [Adding New Validators](#adding-new-validators)
+      - [Integration Best Practices](#integration-best-practices)
+      - [Implementation Steps](#implementation-steps)
+      - [Testing Integration](#testing-integration)
+  - [Troubleshooting](#troubleshooting)
+    - [Common Issues](#common-issues)
+      - [Webhook Server Not Responding](#webhook-server-not-responding)
+      - [Validation Containers Failing](#validation-containers-failing)
+      - [GitLab API Issues](#gitlab-api-issues)
+      - [Invalid Checkers Error](#invalid-checkers-error)
+      - [Dependencies Missing](#dependencies-missing)
+      - [AI Service Connectivity](#ai-service-connectivity)
+    - [Debug Logging Locations](#debug-logging-locations)
+      - [Comprehensive Debug Workflow](#comprehensive-debug-workflow)
+      - [Request ID Tracking](#request-id-tracking)
+    - [Performance Monitoring](#performance-monitoring)
+    - [Deployment Verification](#deployment-verification)
+    - [Security Notes](#security-notes)
+  - [Architecture](#architecture)
+    - [Key Components](#key-components)
+    - [Performance Characteristics](#performance-characteristics)
+  - [Contributing](#contributing)
+    - [Development Setup](#development-setup)
+    - [Adding Features](#adding-features)
 
-## System Overview
-
-The MR Validator consists of two main components working in tandem:
-
-### Architecture Flow
-```
-GitLab MR Event → Webhook Server → Docker Validators → GitLab API Updates
-```
-
-1. **GitLab** sends webhook events when merge requests are created/updated
-2. **[Webhook Server](webhook-server/)** receives events and validates request parameters  
-3. **Docker Containers** execute validation logic in isolated environments
-4. **[MRProper Library](mrproper/)** performs actual validation and updates GitLab discussions
-
-## High-Volume Processing Behavior
-
-### Concurrent Load Scenario - 100 Merge Request Events
-
-When 100 MR events arrive simultaneously, here's what happens at the system level:
-
-```
-Time: T0 - Initial State
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   GitLab        │    │ Webhook Server   │    │ Docker Host     │
-│                 │    │ (Single Process) │    │                 │
-│ 100 MR Events   │    │ Port 9911        │    │ Available       │
-│ Ready to Send   │    │ Tornado IOLoop   │    │ Resources       │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-
-Time: T1 - Event Burst (0-5 seconds)
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   GitLab        │───▶│ Webhook Server   │    │ Docker Host     │
-│                 │    │                  │    │                 │
-│ POST /mr-proper │    │ ┌─ Request 1     │    │                 │
-│ POST /mr-proper │    │ ├─ Request 2     │    │ Starting        │
-│ POST /mr-proper │    │ ├─ Request 3     │    │ Containers...   │
-│ ...             │    │ ├─ ...           │    │                 │
-│ POST /mr-proper │    │ └─ Request 100   │    │ Container Pool  │
-│ (100 requests)  │    │   (Queued)       │    │ Growing         │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-
-Time: T2 - Processing Phase (5-30 seconds)
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   GitLab        │    │ Webhook Server   │───▶│ Docker Host     │
-│                 │    │                  │    │                 │
-│ Waiting for     │    │ Processing       │    │ ┌─ Container 1  │
-│ Responses       │    │ Requests         │    │ ├─ Container 2  │
-│                 │    │ Efficiently      │    │ ├─ Container 3  │
-│ All Received    │    │ Sequentially     │    │ ├─ ...          │
-│ Successfully    │    │ yield wait_exit  │    │ └─ Container N  │
-│                 │    │ Per Request      │    │   (~200 total)  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-
-Time: T3 - Validation Execution (30-180 seconds)
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   GitLab        │    │ Webhook Server   │    │ Docker Host     │
-│                 │    │                  │    │                 │
-│ All Webhooks    │    │ All Requests     │    │ Containers      │
-│ Acknowledged    │    │ Processed        │    │ Executing       │
-│                 │    │ "OK!" Responses  │    │                 │
-│ Awaiting        │    │ Sent             │    │ ┌─ Git Clone    │
-│ Validation      │    │                  │    │ ├─ Git Format   │
-│ Results         │    │ Ready for        │    │ ├─ Message Val  │
-│                 │    │ New Requests     │    │ ├─ GitLab API   │
-│                 │    │                  │    │ └─ Update MR    │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
-
-### Detailed Processing Flow
-
-#### Phase 1: Request Reception (0-5 seconds)
-```
-100 HTTP POST requests → Tornado Server (Port 9911)
-│
-├─ Tornado IOLoop receives all requests rapidly
-├─ Each request triggers GitLabWebHookHandler.post()
-├─ Requests enter Tornado's internal queue
-└─ Processing begins sequentially (single-threaded)
-```
-
-#### Phase 2: Validation and Container Launch (5-30 seconds)
-
-**1-to-Many Webhook Server → MRProper Mapping:**
-
-```
-Single Webhook Server Process
-│
-├─ Processes 1 webhook request at a time (sequential)
-├─ Each webhook request can specify multiple validators
-└─ For each validator → Spawns separate MRProper container
-
-Example Request Flow:
-POST /mr-proper/mrproper-clang-format+mrproper-message
-│
-└─ Single GitLabWebHookHandler.post() call
-    │
-    ├─ checkers = ["mrproper-clang-format", "mrproper-message"]  
-    │
-    └─ For each checker in checkers: (server.py:61-69)
-        │
-        ├─ Container 1: docker run mr-checker mrproper-clang-format project/ns 123
-        └─ Container 2: docker run mr-checker mrproper-message project/ns 123
-```
-
-**Detailed Container Mapping:**
-```
-For 100 MR webhooks with 2 validators each:
-│
-Webhook Server (1 process)
-│
-├─ Request 1  → Container 1A (clang-format) + Container 1B (message)
-├─ Request 2  → Container 2A (clang-format) + Container 2B (message)  
-├─ Request 3  → Container 3A (clang-format) + Container 3B (message)
-├─ ...
-└─ Request 100 → Container 100A (clang-format) + Container 100B (message)
-
-Result: 1 Webhook Server → 200 MRProper Containers
-```
-
-**Container Launch Sequence (Per Request):**
-```
-GitLabWebHookHandler.post() receives webhook
-│
-├─ Validate checkers: ["mrproper-clang-format", "mrproper-message"]
-├─ Parse JSON: data.project.path_with_namespace, data.object_attributes.iid  
-├─ Filter MR events only
-│
-├─ Launch Container Sequence:
-│   │
-│   ├─ for c in checkers: (iterates 2 times)
-│   │   │
-│   │   ├─ c = "mrproper-clang-format"
-│   │   │   └─ p1 = Subprocess(["docker", "run", "-d", "--rm", 
-│   │   │                      "mr-checker", "mrproper-clang-format",
-│   │   │                      "project/namespace", "123"])
-│   │   │   └─ yield p1.wait_for_exit() ← BLOCKS until container starts
-│   │   │
-│   │   └─ c = "mrproper-message" 
-│   │       └─ p2 = Subprocess(["docker", "run", "-d", "--rm",
-│   │                          "mr-checker", "mrproper-message", 
-│   │                          "project/namespace", "123"])
-│   │       └─ yield p2.wait_for_exit() ← BLOCKS until container starts
-│   │
-│   └─ Both containers now running independently
-│
-└─ self.finish("OK!") ← Respond to GitLab
-```
-
-**Result**: Up to **200 Docker containers** running simultaneously (100 MRs × 2 validators)
-
-#### Phase 3: Validation Execution (30-180 seconds)
-
-**MRProper Container Independence:**
-
-Once launched, each MRProper container operates completely independently:
-
-```
-200 MRProper Containers Running Simultaneously
-│
-├─ Container 1A: mrproper-clang-format project/ns 123
-│   │
-│   ├─ Executes: /usr/local/bin/mrproper-clang-format project/ns 123
-│   ├─ Calls: mrproper.git_format.main()
-│   ├─ GitLab API: Fetch MR data, commits, update discussions
-│   └─ Container exits when validation complete
-│
-├─ Container 1B: mrproper-message project/ns 123  
-│   │
-│   ├─ Executes: /usr/local/bin/mrproper-message project/ns 123
-│   ├─ Calls: mrproper.message.main()
-│   ├─ GitLab API: Fetch MR data, awards, update discussions
-│   └─ Container exits when validation complete
-│
-├─ Container 2A: mrproper-clang-format project/ns 124
-├─ Container 2B: mrproper-message project/ns 124
-├─ ...
-└─ Container 100B: mrproper-message project/ns 222
-
-Each container:
-├─ Creates temporary git repository
-├─ Fetches MR branch and commits  
-├─ Performs specific validation (format OR message)
-├─ Updates GitLab MR discussion via API
-└─ Self-destructs (--rm flag)
-```
-
-**Key Architectural Points:**
-
-1. **1-to-Many Relationship**: 
-   - 1 Webhook Server process → 200 MRProper containers
-   - Each container handles 1 specific validation for 1 specific MR
-
-2. **Container Isolation**:
-   - No communication between containers
-   - Each has independent GitLab API access
-   - Separate temporary filesystems and git repositories
-
-3. **Parallel Execution**:
-   - All 200 containers run simultaneously after launch
-   - Webhook server doesn't wait for validation completion
-   - Results posted directly to GitLab by individual containers
-
-4. **Resource Multiplication**:
-   - 100 MRs × 2 validators × ~200MB RAM = ~40GB total
-   - 100 MRs × 2 validators × 4-6 API calls = 800-1200 GitLab requests
-   - Each container performs git clone operations independently
-```
-Docker Host Activity:
-├─ Memory Usage: ~40GB (200 containers × 200MB each) - Within capacity
-├─ CPU Load: High but manageable (git operations + API calls)
-├─ Network: Active GitLab API communication
-└─ Disk I/O: Moderate (temporary git repositories)
-
-GitLab API Activity:
-├─ 200 containers × 4-6 API calls each = 800-1200 requests over time
-├─ Requests spread across 3-5 minute validation window
-├─ API handles load within normal parameters
-└─ Consistent response times maintained
-
-Webhook Server State:
-├─ All 100 requests successfully processed and acknowledged
-├─ Tornado IOLoop free to handle new incoming requests
-├─ "OK!" responses sent to GitLab within timeout window
-└─ System ready for next batch of webhook events
-```
-
-### System Behavior Characteristics
-
-#### ✅ What Works Well (Normal & High Load)
-- **Sequential Processing**: Tornado handles requests reliably one-by-one
-- **Container Isolation**: Each validation runs independently without interference
-- **Auto-cleanup**: `--rm` flag prevents container accumulation
-- **Async Design**: `yield` allows efficient resource utilization during container operations
-- **Resource Management**: System handles 200 concurrent containers within capacity
-- **Load Distribution**: API calls spread across validation timeframe reducing peak load
-
-#### ⚙️ How System Handles 100+ Events Successfully
-- **Efficient Queuing**: Tornado's internal queue manages request ordering
-- **Container Lifecycle**: Docker efficiently manages container creation and cleanup
-- **API Load Spreading**: 800-1200 API calls distributed over 3-5 minute window
-- **Memory Utilization**: 40GB usage within typical server capacity (64-128GB hosts)
-- **Response Timing**: Webhook acknowledgments sent within GitLab timeout window
-
-### Timeline Analysis - 100 MR Events (Successful Processing)
-
-| Time | Webhook Server | Docker Host | GitLab |
-|------|---------------|-------------|---------|
-| 0-5s | Receiving 100 POSTs | Idle | Sending webhooks |
-| 5-15s | Processing first 20 requests | 40 containers launching | Receiving acknowledgments |
-| 15-30s | Processing requests 21-60 | 120 containers running | All webhooks acknowledged |
-| 30-45s | Processing requests 61-100 | 200 containers active | Awaiting validation results |
-| 45-60s | All requests processed | Peak container activity | System monitoring MR updates |
-| 60-180s | Ready for new requests | Containers completing validations | Receiving MR discussion updates |
-
-### Performance Characteristics
-
-#### Processing Efficiency
-- **Sequential Processing**: Each request processed reliably in order
-- **Code Location**: `server.py:69` - `yield p.wait_for_exit()` ensures container starts successfully
-- **Timing**: 100 requests × average 2-3 second container start = 200-300 seconds total processing time
-- **Throughput**: System completes all webhook processing within 5 minutes
-
-#### Resource Utilization
-- **Docker Host**: Efficiently manages 200 concurrent containers
-- **GitLab API**: Handles 800-1200 requests distributed over validation window
-- **Network**: Adequate bandwidth for git operations and API communications
-- **Memory**: 40GB peak usage within server capacity
-
-#### System Strengths
-- **Reliability**: Sequential processing prevents race conditions
-- **Scalability**: Container-based architecture isolates validations
-- **Efficiency**: Async design optimizes resource utilization during I/O operations
-
-### Recommended Monitoring Points
-
-To observe this behavior in production:
-
-```bash
-# Container count monitoring
-docker ps --format "table {{.Names}}\t{{.Status}}" | grep mr-checker | wc -l
-
-# Memory usage tracking  
-docker stats --format "table {{.Container}}\t{{.MemUsage}}" $(docker ps -q --filter ancestor=mr-checker)
-
-# GitLab API response times
-curl -w "@curl-format.txt" -s -o /dev/null https://git.internal.com/api/v4/projects
-
-# Webhook server process monitoring
-ps aux | grep server.py
-netstat -an | grep 9911
-```
-
-This analysis demonstrates the system's capability to successfully handle high concurrent load (100+ MR events) within its current architecture, processing all requests efficiently while maintaining system stability.
-
-## Components
-
-### [webhook-server/](webhook-server/) - HTTP Webhook Handler
-- **Technology**: Tornado web framework (Python)
-- **Port**: 9911 (configurable)
-- **Function**: Receives GitLab webhook events and spawns validation containers
-- **Route**: `/mr-proper/{checker}` where checker specifies validation types
-
-**Key Features:**
-- Validates webhook authenticity and allowed checker types
-- Filters events (ignores jenkins user, irrelevant changes)
-- Launches Docker containers for each requested validation
-- Supports multiple concurrent validators per MR
-
-**Supported Validators:**
-- `mrproper-clang-format` - Code formatting validation
-- `mrproper-message` - Commit message standards validation
-
-### [mrproper/](mrproper/) - Validation Library
-- **Technology**: Python with GitLab API integration
-- **Function**: Core validation logic for code formatting and commit messages
-- **Execution**: Runs inside Docker containers with all required dependencies
-
-**Validation Types:**
-
-**Code Formatting (`git_format.py`)**
-- Validates commits using `git format --fixup`
-- Checks each commit individually for formatting compliance
-- Provides detailed per-commit error reporting
-- Auto-resolves discussions when issues are fixed
-
-**Commit Message Standards (`message.py`)**
-- Validates commit message format: `TAG(TICKET): Subject`
-- Enforces organizational standards (subject length, capitalization, etc.)
-- Cross-references `Reviewed-By` trailers with GitLab thumbs-up approvals
-- Supports per-project configuration via `.mr-proper.conf`
-
-**GitLab Integration (`gitlab.py`)**
-- Manages GitLab API interactions
-- Creates/updates merge request discussions
-- Handles pagination and authentication
-- Tracks approval status via award emojis
-
-## Installation & Setup
+## Quick Start
 
 ### Prerequisites
 - Docker and Docker CLI
 - GitLab access token with API permissions
 - Python 3 environment
 
-### Build Process
+### 1. Build Docker Images
 ```bash
-# Build both Docker images
 ./build-docker-images
 ```
 
-This creates:
-- `mrproper-webhook` - Webhook server container
-- `mr-checker` - Validation library container
+### 2. Configure Environment
 
-### Configuration
+#### Automated CI/CD Setup (Recommended)
+Add these variables in your GitLab project:
+**Project Settings → CI/CD → Variables**
 
-**Create mrproper.env:**
+| Variable Name | Value | Protected | Masked |
+|---------------|-------|-----------|---------|
+| `GITLAB_ACCESS_TOKEN` | `glpat-xxxxxxxxxxxxxxxxxxxx` | Yes | Yes |
+| `LDOCKER_SSH_KEY` | `<base64-encoded-ssh-private-key>` | Yes | No |
+
+**Getting Your GitLab Access Token:**
+1. Go to GitLab → **User Settings** → **Access Tokens**
+2. Create token with scopes: `api`, `read_repository`, `write_repository`
+3. Copy the token (starts with `glpat-`)
+4. Add to GitLab CI variables as `GITLAB_ACCESS_TOKEN`
+
+#### Manual Setup (Local Development)
+Create `mrproper.env`:
 ```bash
 GITLAB_ACCESS_TOKEN=your_gitlab_token_here
 ```
 
-**Start the webhook server:**
+### 3. Start Server
 ```bash
 ./start-server
 ```
 
-### GitLab Webhook Configuration
-
-Configure your GitLab project webhooks to point to:
-- **URL**: `http://your-server:9911/mr-proper/mrproper-clang-format+mrproper-message`
+### 4. Configure GitLab Webhook
+Point your GitLab project webhook to:
+- **URL**: `http://your-server:9912/mr-proper/mrproper-clang-format+mrproper-message+rate-my-mr`
 - **Events**: Merge request events
-- **Secret Token**: Not required (validation via allowed checkers)
 
-## Usage Examples
+## System Overview
 
-### Single Validator
-```bash
-# Only code formatting validation
-curl -X POST http://localhost:9911/mr-proper/mrproper-clang-format
+The MR Validator consists of two main components working together:
+
+```mermaid
+flowchart LR
+    A[GitLab MR Event] --> B[Webhook Server]
+    B --> C[Docker Validators]
+    C --> D[GitLab API Updates]
 ```
 
-### Multiple Validators
+1. **GitLab** sends webhook events when merge requests are created/updated
+2. **Webhook Server** receives events and validates request parameters
+3. **Docker Containers** execute validation logic in isolated environments
+4. **MRProper Library** performs actual validation and updates GitLab discussions
+
+## Features
+
+### Multi-Validator Support
+- **Code Formatting**: Clang-format validation with per-commit analysis
+- **Commit Messages**: Organizational standards enforcement
+- **AI Quality Assessment**: Comprehensive code review and quality scoring
+
+### High Performance
+- **Concurrent Processing**: Handles 100+ simultaneous MR validations
+- **Container Isolation**: Each validation runs independently
+- **Auto-Scaling**: Dynamic container spawning based on load
+
+### Smart Analysis
+- **AI-Powered Reviews**: Bug detection, security analysis, performance insights
+- **Quality Scoring**: 1-5 star rating system with automatic blocking
+- **LOC Analysis**: Lines of code tracking with configurable limits
+- **Lint Pattern Detection**: Identifies new code suppression patterns
+
+### GitLab Integration
+- **Automatic Discussion Updates**: Results posted as MR comments
+- **Resolution Management**: Auto-resolves when issues are fixed
+- **Approval Cross-Reference**: Validates reviewer trailers against GitLab approvals
+
+## Installation & Setup
+
+### Build Process
+The system creates two Docker images:
+- `mrproper-webhook-vp-test` - Webhook server container
+- `mr-checker-vp-test` - Validation library container
+
 ```bash
-# Both formatting and message validation
-curl -X POST http://localhost:9911/mr-proper/mrproper-clang-format+mrproper-message
+# Build both images
+./build-docker-images
+
+# This creates:
+# - mrproper-webhook-vp-test: Tornado-based webhook handler
+# - mr-checker-vp-test: Ubuntu-based validation environment with clang-format
 ```
 
-### Project-Specific Configuration
+#### Dependencies
+Before running the system, ensure these dependencies are available:
 
-Create `.mr-proper.conf` in your repository root:
+```bash
+cd mrproper
+pip install -r requirements.txt
+```
+
+Required packages:
+- `requests>=2.28.0` - For API calls
+- `prettytable>=3.0.0` - For tabular output formatting
+- `bandit>=1.7.0` - For security scanning
+- `radon>=5.1.0` - For code complexity analysis
+
+#### Automated Deployment Flow
+1. **CI Pipeline triggers** on push/merge
+2. **Builds Docker images** (`mr-checker-vp-test`, `mrproper-webhook-vp-test`)
+3. **SSH to target server** (10.X.X.X)
+4. **Creates mrproper.env** from GitLab CI variable automatically
+5. **Deploys container** with volume mount to the created file
+
+### Configuration Files
+
+#### Environment Configuration (`mrproper.env`)
+```bash
+GITLAB_ACCESS_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+```
+
+#### Project-Specific Configuration (`.mr-proper.conf`)
 ```ini
 [message]
 valid_tags = BUG,FEATURE,IMPROVEMENT,REFACTOR,HOTFIX
 valid_tags_without_ticket = IMPROVEMENT,REFACTOR
 ```
 
-## Validation Results
+### Directory Structure
+```
+mr-validator/
+├── webhook-server/                # Tornado webhook handler
+│   ├── server.py                  # Main webhook server
+│   └── Dockerfile                 # Alpine-based webhook image
+├── mrproper/                      # Core validation library
+│   ├── bin/                       # Entry point scripts
+│   │   ├── mrproper-clang-format  # Code formatting validator
+│   │   ├── mrproper-message       # Commit message validator
+│   │   └── rate-my-mr             # AI quality assessment
+│   ├── mrproper/                  # Python validation modules
+│   │   ├── git_format.py          # clang-format validation
+│   │   ├── message.py             # Commit message validation
+│   │   ├── rate_my_mr_gitlab.py   # AI-powered MR analysis
+│   │   ├── gitlab.py              # GitLab API client
+│   │   └── ...                    # Supporting modules
+│   ├── setup.py                   # Package installation
+│   └── Dockerfile                 # Ubuntu-based validation image
+├── mrproper.env                   # Environment configuration
+├── build-docker-images            # Build script
+├── start-server                   # Server startup script
+├── README.md                      # Complete user guide
+└── ARCHITECTURE.md                # Technical documentation
+```
 
-Results are posted as GitLab merge request discussions:
+## Configuration
 
-### Code Formatting Results
-- `:page_facing_up:` Header with detailed per-commit analysis
-- Links to internal formatting guidelines
-- Auto-resolves when all formatting issues are fixed
-- Prevents manual resolution until compliance achieved
+### GitLab Webhook Configuration
+Configure your GitLab project webhooks:
 
-### Commit Message Results  
-- `:mag_right:` Header with tabular commit status
-- Detailed error explanations for each validation rule
-- Cross-references reviewer approvals with commit trailers
-- Provides hints for using `git gitlab-apply-reviewers` tool
+#### Single Validator
+```
+URL: http://your-server:9912/mr-proper/mrproper-clang-format
+Events: Merge request events
+```
 
-## Development Workflow Integration
+#### Multiple Validators
+```
+URL: http://your-server:9912/mr-proper/mrproper-clang-format+mrproper-message+rate-my-mr
+Events: Merge request events
+```
 
-### For Developers
+### Supported Validators
+- `mrproper-clang-format` - Code formatting validation
+- `mrproper-message` - Commit message standards validation
+- `rate-my-mr` - AI-powered comprehensive quality assessment
+
+
+## Usage
+
+### Development Workflow Integration
+
+#### For Developers
 1. Create merge request in GitLab
 2. Validation automatically triggered on MR creation/updates
 3. Review validation results in MR discussions
 4. Fix issues and push updates to trigger re-validation
 5. Merge when all validations pass
 
-### For Repository Maintainers
+#### For Repository Maintainers
 1. Configure webhook pointing to your MR Validator instance
 2. Customize validation rules via `.mr-proper.conf` if needed
 3. Validation results prevent merging of non-compliant code
 4. Automatic resolution when issues are addressed
 
-## Security Considerations
+### Example API Calls
+```bash
+# Test single validator
+curl -X POST http://localhost:9912/mr-proper/mrproper-clang-format
 
-- **Allowed Checkers**: Only predefined validator types accepted
-- **User Filtering**: Ignores updates from automated users (jenkins)
-- **Container Isolation**: All validation runs in isolated Docker containers
-- **API Authentication**: Uses GitLab private tokens for API access
-- **Non-privileged Execution**: Validators run as `mrcheck` user
+# Test multiple validators
+curl -X POST http://localhost:9912/mr-proper/mrproper-clang-format+mrproper-message+rate-my-mr
+```
 
-## Monitoring & Logging
+## Validation Types
 
-- **Docker Logging**: Configured with syslog driver
-- **Request Logging**: All webhook requests logged with detailed event data
-- **Error Handling**: Comprehensive error reporting to both logs and GitLab
-- **Container Management**: Auto-cleanup of validation containers
+### 1. Code Formatting (`mrproper-clang-format`)
+- **Technology**: clang-format with organizational standards
+- **Scope**: Per-commit formatting validation
+- **Output**: Detailed formatting errors with fix suggestions
+- **Resolution**: Auto-resolves when all formatting issues are fixed
 
-## Future Enhancement Areas
+#### Results Format
+```
+git format report
+===================================================
 
-Based on the current design, potential areas for extending functionality:
+✓ Commit abc123f: Added user authentication - formatting OK
+✗ Commit def456a: Updated database schema - contains formatting errors
+   • Use 'git format --fixup' to fix automatically
 
-### Configuration Improvements
-- Make port 9911 configurable via configuration files
-- Support multiple GitLab instances
-- Webhook secret validation
-- Rate limiting and request throttling
+git format instructions: https://wiki.internal.com/git-format
+WARNING: DO NOT RESOLVE MANUALLY - Will auto-resolve when fixed
+```
 
-### Additional Validators
-- Security vulnerability scanning
-- License compliance checking
-- Documentation coverage validation
-- Test coverage requirements
+### 2. Commit Message Validation (`mrproper-message`)
+- **Format**: `TAG(TICKET): Subject`
+- **Validation**: Length, capitalization, trailer verification
+- **Cross-Reference**: Reviewed-By trailers vs GitLab approvals
+- **Configuration**: Project-specific via `.mr-proper.conf`
 
-### Enhanced GitLab Integration
-- Support for GitLab CI/CD pipeline integration
-- Multi-project validation coordination
-- Advanced approval workflow integration
+#### Results Format
+```
+commit message check report
+=============================================
 
-### Operational Features
-- Health check endpoints
-- Metrics and monitoring integration
-- Horizontal scaling support
-- Database persistence for validation history
+| Commit | Status |
+|--------|--------|
+|abc123f<br>`BUG(PROJ-123): Fix login issue`|✓|
+|def456a<br>`Added new feature`|✗ Missing tag format|
 
-The current architecture provides a solid foundation for any of these enhancements while maintaining the core validation pipeline integrity.
+WARNING: 1 commit is missing `Reviewed-By` trailer
+Hint: Use `git gitlab-apply-reviewers`
+```
+
+### 3. AI Quality Assessment (`rate-my-mr`)
+The most comprehensive validator that combines AI-powered analysis with static code metrics to provide a holistic quality assessment.
+
+- **AI Analysis**: Code review, bug detection, security scanning
+- **Metrics**: LOC analysis, complexity measurement, lint patterns
+- **Scoring**: 1-5 star quality rating with automatic blocking
+- **Integration**: GitLab discussion with detailed breakdown
+
+#### Results Format
+```
+:star2: MR Quality Rating Report :star2:
+========================================
+
+## Overall Rating: 4/5
+:star::star::star::star::white_circle:
+
+### Quality Assessment Results
+:white_check_mark: AI-powered summary generated successfully
+:white_check_mark: Comprehensive AI code review completed
+Lines Added: 156, Lines Removed: 23, Net Change: 133
+WARNING: New Lint Disables: 2
+
+### Scoring Breakdown
+| Metric | Status | Impact |
+|--------|--------|--------|
+| Lines of Code | 133 lines | Within limits |
+| Lint Disables | 2 new disables | WARNING: New lint suppressions added |
+
+**Final Score**: 4/5 points
+:white_check_mark: Quality assessment passed - MR meets quality standards
+```
+
+For detailed technical architecture, AI prompts, scoring algorithms, and configuration options, see **[Phase 3: Rate my MR Deep Dive](./ARCHITECTURE.md#phase-3-rate-my-mr-deep-dive)** in the Architecture documentation.
+
+## Integration Guide
+
+### Adding New Validators
+
+#### Integration Best Practices
+
+**1. Dependency Management**
+- Always add new dependencies to `requirements.txt`
+- Test imports before committing
+- Use virtual environments for development
+
+**2. Code Structure Pattern**
+For new validators, follow this pattern:
+```
+mrproper/mrproper/
+├── your_validator.py          # Core logic
+├── your_validator_gitlab.py   # GitLab integration
+└── bin/your-validator         # CLI entry point
+```
+
+**3. Import Standards**
+- Use relative imports: `from .module import Class`
+- Add all imports at the top
+- Group imports: stdlib, third-party, local
+
+#### Implementation Steps
+
+**Step 1: Create Validation Module**
+```python
+# mrproper/mrproper/my_validator.py
+import sys
+import urllib.parse
+from . import gitlab
+
+HEADER = """\
+My Validator Report
+===================
+
+"""
+
+def handle_mr(proj, mriid):
+    # Get MR data
+    mr = gitlab.gitlab(f"/projects/{proj}/merge_requests/{mriid}")
+
+    # Implement validation logic
+    results = perform_validation(mr)
+
+    # Format results for GitLab discussion
+    report_body = format_results(results)
+
+    # Update GitLab discussion
+    gitlab.update_discussion(proj, mriid, HEADER, report_body,
+                           must_not_be_resolved=has_issues(results))
+
+def main():
+    proj = urllib.parse.quote(sys.argv[1], safe="")
+    mriid = int(sys.argv[2])
+    handle_mr(proj, mriid)
+```
+
+**Step 2: Add Entry Point Script**
+```python
+# mrproper/bin/my-validator
+#!/usr/bin/env python3
+import mrproper.my_validator
+
+if __name__ == '__main__':
+    mrproper.my_validator.main()
+```
+
+**Step 3: Update Allowed Checkers**
+```python
+# webhook-server/server.py
+ALLOWED_CHECKERS = {
+    'mrproper-clang-format',
+    'mrproper-message',
+    'rate-my-mr',
+    'my-validator',  # Add new validator
+}
+```
+
+**Step 4: Update Setup Configuration**
+```python
+# mrproper/setup.py
+scripts=['bin/mrproper-clang-format',
+         'bin/mrproper-message',
+         'bin/rate-my-mr',
+         'bin/my-validator']  # Add new script
+```
+
+**Step 5: Integration Checklist**
+- [ ] Add validator to `ALLOWED_CHECKERS`
+- [ ] Create `*_gitlab.py` wrapper module
+- [ ] Add binary script to `setup.py`
+- [ ] Test with webhook server
+- [ ] Update Docker builds
+- [ ] Document configuration
+
+#### Testing Integration
+```bash
+# Test imports
+cd mrproper
+python -c "from mrproper import your_module; print('OK')"
+
+# Rebuild containers
+./build-docker-images
+
+# Test single validator
+curl -X POST http://localhost:9912/mr-proper/my-validator
+
+# Test combined validators
+curl -X POST http://localhost:9912/mr-proper/mrproper-clang-format+my-validator
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### Webhook Server Not Responding
+**Symptoms**: No validation containers being launched
+```bash
+# Check server status
+ssh docker@10.X.X.X "docker ps | grep webhook"
+
+# View webhook logs
+ssh docker@10.X.X.X "tail -f /home/docker/tmp/mr-validator-logs/webhook-server.log"
+
+# Test webhook endpoint
+curl -X POST http://your-server:9912/mr-proper/mrproper-clang-format
+```
+**Fix**: Check GitLab webhook configuration points to correct URL
+
+#### Validation Containers Failing
+**Symptoms**: Containers exit immediately or with errors
+```bash
+# List recent containers
+ssh docker@10.X.X.X "docker ps -a | grep mr-checker-vp-test"
+
+# Check specific container logs
+ssh docker@10.X.X.X "docker logs <container-name>"
+
+# Test container manually
+docker run --rm --env-file mrproper.env mr-checker-vp-test mrproper-clang-format project/test 123
+```
+**Common Causes**:
+- `mrproper.env` file missing
+- Wrong Docker image name
+- Missing dependencies
+
+#### GitLab API Issues
+**Symptoms**: "401 Unauthorized" or "403 Forbidden" errors
+- Verify `GITLAB_ACCESS_TOKEN` in `mrproper.env`
+- Check token permissions (API access required)
+- Ensure GitLab host configuration matches your instance
+
+**Test API Access**:
+```bash
+source mrproper.env
+curl -H "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" \
+     https://git.internal.com/api/v4/projects
+```
+
+#### Invalid Checkers Error
+**Symptoms**: Webhook returns "Invalid checkers requested"
+**Fix**: Ensure webhook URL uses correct validator names:
+- `mrproper-clang-format`
+- `mrproper-message`
+- `rate-my-mr`
+
+#### Dependencies Missing
+**Symptoms**: `ModuleNotFoundError` in container logs
+```bash
+# Rebuild containers with dependencies
+./build-docker-images
+```
+
+#### AI Service Connectivity
+**Symptoms**: AI analysis fails or times out
+- Verify AI service at `http://10.31.88.29:6006` is accessible
+- Check network connectivity from validation containers
+- Review timeout settings (default: 120 seconds)
+
+**Test AI Service**:
+```bash
+curl -X POST http://10.31.88.29:6006/generate \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"test"}]}'
+```
+
+
+### Debug Logging Locations
+```
+Host: /home/docker/tmp/mr-validator-logs/
+├── webhook-server.log                           # Webhook activities
+├── rate-my-mr-mr-rate-my-mr-272-a1b2c3d4.log    # AI analysis logs
+├── gitlab-api-mr-clang-format-272-i9j0k1l2.log  # GitLab API calls
+└── ...                                          # Per-container logs
+```
+
+#### Comprehensive Debug Workflow
+
+**Step 1: Check if Webhook is Received**
+```bash
+# Monitor webhook server logs in real-time
+ssh docker@10.X.X.X "tail -f /home/docker/tmp/mr-validator-logs/webhook-server.log"
+
+# Look for log entries like:
+# [20240904_123456_789123] === NEW WEBHOOK REQUEST ===
+```
+
+**Step 2: Verify Container Launch**
+```bash
+# Check if validation containers are created
+ssh docker@10.X.X.X "docker ps | grep mr-"
+
+# Check specific container logs
+ssh docker@10.X.X.X "docker logs <container-name>"
+```
+
+**Step 3: Check GitLab API Access**
+```bash
+# View validator container logs for API errors
+ssh docker@10.X.X.X "docker logs <mr-container> 2>&1 | grep -i 'gitlab\|error\|401\|403'"
+```
+
+**Step 4: Monitor All Activity in Real-time**
+```bash
+# Terminal 1: Webhook logs
+ssh docker@10.X.X.X "tail -f /home/docker/tmp/mr-validator-logs/webhook-server.log"
+
+# Terminal 2: Docker events
+ssh docker@10.X.X.X "docker events --filter container=mrproper-webhook-vp-test"
+
+# Terminal 3: All container logs
+ssh docker@10.X.X.X "docker ps --format 'table {{.Names}}\t{{.Status}}' | grep mr-"
+```
+
+#### Request ID Tracking
+Each webhook request gets a unique ID like `20240904_123456_789123`.
+
+**Find all logs for specific request**:
+```bash
+ssh docker@10.X.X.X "grep '789123' /home/docker/tmp/mr-validator-logs/webhook-server.log"
+```
+
+### Performance Monitoring
+```bash
+# Container count monitoring
+docker ps --format "table {{.Names}}\t{{.Status}}" | grep mr-checker-vp-test | wc -l
+
+# Memory usage tracking
+docker stats --format "table {{.Container}}\t{{.MemUsage}}" $(docker ps -q --filter ancestor=mr-checker-vp-test)
+
+# Log directory size
+du -sh /home/docker/tmp/mr-validator-logs/
+
+# Monitor AI service response times
+time curl -X POST http://10.31.88.29:6006/generate \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"test"}]}'
+
+# Check GitLab API rate limits
+curl -I https://git.internal.com/api/v4/projects
+```
+
+### Deployment Verification
+After deployment, verify the system is working:
+
+```bash
+# SSH to target server
+ssh docker@10.X.X.X
+
+# Check if mrproper.env was created correctly
+cat mrproper.env
+# Should show: GITLAB_ACCESS_TOKEN=glpat-...
+
+# Check container is running
+docker ps | grep mrproper-webhook-vp-test
+
+# Check logs
+docker logs mrproper-webhook-vp-test
+
+# Test webhook endpoint
+curl http://localhost:9912/mr-proper/mrproper-clang-format
+```
+
+### Security Notes
+- **GitLab token is masked** in CI variables
+- **File created with restricted permissions** on target server
+- **SSH key is base64-encoded** in CI variables
+- **No secrets in git repository**
+
+## Architecture
+
+For detailed technical architecture, deployment flows, and system internals, see:
+
+**[ARCHITECTURE.md](./ARCHITECTURE.md)** - Comprehensive technical documentation
+
+
+### Key Components
+- **Webhook Server**: Tornado-based HTTP handler (Port 9912)
+- **Validation Library**: Python-based analysis modules
+- **Docker Integration**: Isolated container execution
+- **GitLab API Client**: Comprehensive API integration
+- **AI Service Integration**: External code analysis service
+
+### Performance Characteristics
+- **High Concurrency**: 100+ simultaneous MR validations
+- **Resource Efficient**: ~200MB per validation container
+- **Fast Response**: <5 second webhook acknowledgment
+- **Comprehensive Analysis**: 3-5 minute complete validation
+
+## Contributing
+
+### Development Setup
+1. Clone repository
+2. Build development images: `./build-docker-images`
+3. Configure test environment: `cp mrproper.env.example mrproper.env`
+4. Start development server: `./start-server`
+
+### Adding Features
+- See [Integration Guide](#integration-guide) for adding validators
+- Follow existing patterns in `mrproper/mrproper/` modules
+- Update documentation and tests
+
+## License
+
+Internal use - see company licensing policies.
+
+---
+
+*MR Validator provides comprehensive automated code quality enforcement integrated directly into the GitLab development workflow, ensuring consistent standards while providing detailed feedback to developers.*

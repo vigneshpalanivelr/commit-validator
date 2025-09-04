@@ -16,7 +16,7 @@ HEADER = """\
 INSTRUCTIONS_ON_ERRORS = """\
 
 `git format` instructions available here:
-https://wiki.sandvine.com/display/~kgrasman/git-format+for+packetlogic2
+https://wiki.internal.com/display/~kgrasman/git-format+for+packetlogic2
 
 :bomb: **DO NOT RESOLVE THIS COMMENT WITHOUT FIXING THESE ISSUES** :bomb:<br>
 It will be automatically resolved when they are fixed.<br>

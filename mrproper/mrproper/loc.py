@@ -1,3 +1,4 @@
+import re
 from radon.raw import analyze
 from prettytable import PrettyTable
 

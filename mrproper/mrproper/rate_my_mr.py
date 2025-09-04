@@ -3,8 +3,12 @@ import argparse
 from prettytable import PrettyTable
 import re
 import json
+import os
 from .loc import LOCCalculator
-from .params import RMMConstants, RMMWeights, RMMLimits
+from .params import RMMConstants, RMMWeights, RMMLimits, get_all_applicable_checks
+from .cyclomatic_complexity import CyclomaticComplexityCalculator
+from .security_scan import SecurityScanner
+from .cal_rating import CalRating
 
 
 def print_banner(title):
@@ -16,40 +20,40 @@ def send_request(payload, url=RMMConstants.agent_url.value):
     print(f"[DEBUG] AI Service Request - URL: {url}")
     print(f"[DEBUG] AI Service Request - Payload size: {len(str(payload))} chars")
     print(f"[DEBUG] AI Service Request - Timeout: 120 seconds")
-    
+
     try:
         print("[DEBUG] Sending POST request to AI service...")
         resp = requests.post(url, json=payload, timeout=120)
         print(f"[DEBUG] AI Service Response - Status Code: {resp.status_code}")
         print(f"[DEBUG] AI Service Response - Content Length: {len(resp.content)}")
-        
+
         # Raise an error for bad responses (4xx and 5xx)
         resp.raise_for_status()
-        
+
         response_json = resp.json()
         print(f"[DEBUG] AI Service Response - JSON parsed successfully")
         return resp.status_code, response_json
-        
+
     except requests.exceptions.HTTPError as http_err:
         print(f"[DEBUG] AI Service HTTP Error: {http_err}")
         print(f"[DEBUG] Response content: {resp.content[:500] if 'resp' in locals() else 'No response'}")
         return resp.status_code, str(http_err)
-        
+
     except requests.exceptions.ConnectionError as conn_err:
         print(f"[DEBUG] AI Service Connection Error: {conn_err}")
         print("[DEBUG] This suggests the AI service is not reachable")
         return None, f"Connection failed: {str(conn_err)}"
-        
+
     except requests.exceptions.Timeout as timeout_err:
         print(f"[DEBUG] AI Service Timeout Error: {timeout_err}")
         print("[DEBUG] AI service took longer than 120 seconds to respond")
         return None, f"Timeout after 120s: {str(timeout_err)}"
-        
+
     except requests.exceptions.RequestException as req_err:
         print(f"[DEBUG] AI Service Request Error: {req_err}")
         print(f"[DEBUG] Error type: {type(req_err).__name__}")
         return None, str(req_err)
-        
+
     except Exception as err:
         print(f"[DEBUG] AI Service Unexpected Error: {err}")
         print(f"[DEBUG] Error type: {type(err).__name__}")
@@ -86,7 +90,6 @@ def generate_summary(file_path):
         print("\n")
     return True, None
 
-
 def generate_initial_code_review(file_path):
     with open(file_path, 'r') as file:
         diff_output = file.read()
@@ -115,7 +118,6 @@ def generate_initial_code_review(file_path):
         print("\n")
     return True, None
 
-
 def generate_lint_disable_report(file_path):
     try:
         with open(file_path, 'r') as file:
@@ -123,13 +125,13 @@ def generate_lint_disable_report(file_path):
         payload1 = {
             "messages": [
                 {"role": "system", "content": ("Please analyze the following git diff output and extract all instances of # pylint: disable= comments. For each instance, provide a summary that includes:"
-                                               "The specific pylint checks being disabled."
-                                               "The lines of code they are associated with."
-                                               "Any context or reasoning for why these disables might have been implemented."
-                                               "Additionally, please count and report the total number of instances where pylint disables have been applied in this diff"
-                                               "lines starts with single + is added and single - is removed"
-                                               "nulliify if same is removed and added in another place for same function"
-                                               "Also give report only added lints in json {\"num_lint_disable\": <number>, \"lints_that_disabled\":lints that disabled in commaseparated}")},
+                                            "The specific pylint checks being disabled."
+                                            "The lines of code they are associated with."
+                                            "Any context or reasoning for why these disables might have been implemented."
+                                            "Additionally, please count and report the total number of instances where pylint disables have been applied in this diff"
+                                            "lines starts with single + is added and single - is removed"
+                                            "nulliify if same is removed and added in another place for same function"
+                                            "Also give report only added lints in json {\"num_lint_disable\": <number>, \"lints_that_disabled\":lints that disabled in commaseparated}")},
                 {"role": "user", "content": diff_output}
             ]
         }
@@ -155,24 +157,119 @@ def generate_lint_disable_report(file_path):
         return False, str(err)
 
 
-def cal_rating(total_loc, lint_disable_count):
-    print_banner("Effective Rating Report")
-    total_rating = RMMWeights.TOTAL_WEIGHT.value
-    if total_loc > RMMLimits.MAX_LOC.value:
-        total_rating -= RMMWeights.MAX_LOC.value
+def generate_added_code_file(diff_file_path: str):
+    """
+    Calls LLM API with diff file and gets valid Python file containing:
+    - Entirely new methods (as-is).
+    - Loose added statements wrapped in __bandit_dummy__().
+    """
+    try:
+        with open(diff_file_path, "r") as f:
+            diff_output = f.read()
+
+        payload = {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are given a git diff file content. Your task is to extract only the newly added code "
+                        "from the diff and generate a valid Python file for Bandit scanning.\n\n"
+                        "Rules:\n"
+                        "1. Lines starting with '+' are additions. Ignore '-' lines and unchanged context lines (starting with ' ').\n"
+                        "2. If an entirely new function or method is added (lines starting with 'def ...' and all subsequent '+' lines), include "
+                        "the full function body exactly as shown, including docstrings, comments (e.g., pylint directives), and original indentation (after stripping '+').\n"
+                        "3. If added lines are not part of a new function:\n"
+                        "   - Strip their indentation (remove leading spaces after '+').\n"
+                        "   - Wrap them under a dummy function called:\n"
+                        "       def __bandit_dummy__():\n"
+                        "           <added lines>\n"
+                        "4. If any new function or added line uses 'self':\n"
+                        "   - Place all such code inside a dummy class:\n"
+                        "       class __BanditTmp__:\n"
+                        "           def __init__(self):\n"
+                        "               class DummyLogger:\n"
+                        "                   def info(self, msg): pass\n"
+                        "                   def warning(self, msg): pass\n"
+                        "               self.logger = DummyLogger()\n"
+                        "           def <method>(self, ...):\n"
+                        "               ...\n"
+                        "   - Non-method added lines that reference 'self' should be inside:\n"
+                        "       def __dummy__(self):\n"
+                        "           <added lines>\n"
+                        "5. For any undefined variables (e.g., found_primary_disk_size, host_allocated_disk_gb) in the dummy function:\n"
+                        "   - Add placeholder definitions at the start of __bandit_dummy__() or __dummy__(self):\n"
+                        "       undefined_var = 0\n"
+                        "   - Place these before other lines to avoid NameError.\n"
+                        "6. Preserve all comments, including pylint directives (e.g., '# pylint: disable=...'), in their original positions.\n"
+                        "7. Every function (real or dummy) must end with a valid statement, e.g., `return None`, to avoid dangling code.\n"
+                        "8. Do not include markdown formatting (e.g., ```python or ```). Output only valid Python code.\n"
+                        "9. Ensure the final file is valid Python syntax (AST-parsable) and can be scanned by Bandit.\n"
+                        "10. Before returning, internally verify that `ast.parse(output)` succeeds. If it fails, adjust the output (e.g., add placeholders) to make it parseable.\n"
+                        "11. Exclude docstring fragments like '@param' or '@return' unless they are part of a complete docstring in a new method.\n\n"
+                        "Output only the extracted Python code, with no explanations or markdown fences."
+                    ),
+                },
+                {"role": "user", "content": diff_output},
+            ]
+        }
+        status_code, response = send_request(payload)
+
+        if status_code != 200:
+            return False, f"API call failed: {response}"
+
+        # Extract assistant message
+        content = response.get("content")[0]
+        content_type = content.get("type")
+        python_code = content.get(content_type, "").strip()
+        # print("**"*9)
+        # print(python_code)
+
+        if not python_code:
+            return False, "No Python code returned from LLM"
+
+        # Always generate new file in current working directory
+        out_file = os.path.join(os.getcwd(), "added_code_output.py")
+        with open(out_file, "w") as f:
+            f.write(python_code)
+
+        return True, out_file
+
+    except Exception as e:
+        return False, str(e)
+
+def cal_loc(file_path):
+    print_banner("LOC Summary")
+    loc_cal = LOCCalculator(file_path)
+    return loc_cal.calculate_loc()
+
+
+def cal_cc(file_path):
+    print_banner("CC Summary")
+    cc_cal = CyclomaticComplexityCalculator(file_path)
+    return cc_cal.analyze()
+
+def cal_ss(file_path):
+    print_banner("Security Scan Summary")
+    ok, result = generate_added_code_file(file_path)
+    if ok:
+        ss_cal = SecurityScanner(result)
+        print(ss_cal.analyze())
+        return ss_cal.analyze()
+
+
+def cal_rating(net_loc, lint_disable_count):
+    """Simple rating calculation function for GitLab integration"""
+    score = 5  # Start with perfect score
+    
+    # Deduct for high LOC
+    if net_loc > 500:
+        score -= 1
+        
+    # Deduct for lint disables
     if lint_disable_count > 0:
-        total_rating -= RMMWeights.LINT_DISABLE.value
-    table = PrettyTable()
-    table.field_names = ["Metric", "Expected", "Actual", "Rating"]
-    table.add_row(["Lines of Code", f"<= {RMMLimits.MAX_LOC.value}", total_loc, RMMWeights.MAX_LOC.value if total_loc <= RMMLimits.MAX_LOC.value else 0])
-    table.add_row(["Lint Disables", "0", lint_disable_count, RMMWeights.LINT_DISABLE.value if lint_disable_count == 0 else 0])
-    table.add_row(["------------------", "----------", "--------", "--------"])
-    effective_rating = max(total_rating, 0)
-    table.add_row(["Effectibe rating",  RMMWeights.TOTAL_WEIGHT.value, "", effective_rating])
-    print(table)
-
-    return effective_rating
-
+        score -= 1
+        
+    return max(score, 0)  # Don't go below 0
 
 def main():
     parser = argparse.ArgumentParser(
@@ -180,20 +277,32 @@ def main():
     )
     parser.add_argument('filename', type=str, help='The name of the file to process')
     args, _ = parser.parse_known_args()
-    status_code, commit_summary = generate_summary(args.filename)
-    status_code, review_comments = generate_initial_code_review(args.filename)
+    all_checks = get_all_applicable_checks()
+    # print(all_checks)
+    checks_func_map = {
+        "MR_SUMMARY": generate_summary,
+        "INITIAL_REVIEW": generate_initial_code_review,
+        "LINT_DISABLE": generate_lint_disable_report,
+        "MAX_LOC": cal_loc,
+        "CYCLOMATIC_COMPLEXITY": cal_cc,
+        "SECURITY_SCAN": cal_ss
+    }
 
-    print_banner("LOC Summary")
-    loc_cal = LOCCalculator(args.filename)
-    success, loc_data = loc_cal.calculate_loc()
-    if not success:
-        print(f"Failed to calculate LOC: {loc_data}")
-    print("\n"*2)
-    success, lint_disbale = generate_lint_disable_report(args.filename)
-    if not success:
-        print(f"Failed to generate lint disable report: {lint_disbale}")
-    print("\n"*2)
-    cal_rating(loc_data.get('net_lines_of_code_change'), lint_disbale.get('num_lint_disable'))
+    collected_data = {}
+
+    for check, func in checks_func_map.items():
+        # print(check)
+        if check in all_checks:
+            success, result = func(args.filename)
+            # print(success)
+            # print(result)
+            if not success:
+                print(f"Failed to execute {check}: {result}")
+            collected_data[check] = result
+    # print("@"*100)
+    # print(collected_data)
+    cal_rating_obj = CalRating(collected_data)
+    cal_rating_obj.cal_rating()
 
 
 if __name__ == "__main__":
