@@ -1,0 +1,61 @@
+diff --git a/stages/helpers/vm_resource_manager.py b/stages/helpers/vm_resource_manager.py
+index 6455fa6..df41d70 100644
+--- a/stages/helpers/vm_resource_manager.py
++++ b/stages/helpers/vm_resource_manager.py
+@@ -1197,13 +1197,40 @@ class ResourceCalculator:
+             self.logger.error("Failed to build RAM configurations with error {}".format(str(err)))
+             return False, str(err)
+
+-    # pylint: disable=import-error
++    # pylint: disable=import-error, no-name-in-module
++    def calculate_host_allocated_value_from_percent(self, total_value, allocated_value):
++        """
++        Calculates an allocated value based on a percentage or returns the direct value.
++
++        Parameters:
++            total_value (float): The total value to calculate from.
++            allocated_value (str or float): Either a percentage string (e.g. "25%") or a direct float value.
++
++        Returns:
++            float: The calculated allocated value.
++
++        If allocated_value is a string ending with '%', it's treated as a percentage.
++        The percentage is converted to a float and the allocated value is calculated as a fraction of total_value.
++        If allocated_value is not a percentage, it's converted to a float and returned directly.
++
++        Example usage:
++            result = HostManager.calculate_host_allocated_value_from_percent(1000, "25%")  # Returns 250.0
++            result = HostManager.calculate_host_allocated_value_from_percent(1000, 200)  # Returns 200.0
++        """
++        if isinstance(allocated_value, str) and allocated_value.strip().endswith('%'):
++            percentage_value = float(allocated_value.strip()[:-1]) / 100
++            self.logger.info(f'Host allocated value in gb from percentage: {total_value * percentage_value}')
++            return total_value * percentage_value
++        else:
++            self.logger.warning(f'Got direct value instead of percentage: {float(allocated_value)}')
++            return float(allocated_value)
++
+-    # pylint: disable=import-error
++    # pylint: disable=import-error, no-name-in-module, too-many-locals
+     def calculate_disk_configs(self, resource_dict, host_allocated_disk_gb):
+         """
+         Function to calculate disk calculations
+         @param resource_dict: MANDATORY dict @n
+             Inspection report values for various resources
+             eg: {'found_server_type': 'R760', 'found_server_vendor_type': 'DELL'}
+-        @param host_allocated_disk_gb: MANDATORY int @n
++        @param host_allocated_disk_gb: MANDATORY string or int @n
+             allocated disk for host in gb
+             eg: 50
+         @return: Tuple
+@@ -1212,7 +1239,9 @@ class ResourceCalculator:
+         """
+         try:
+             found_primary_disk_size = resource_dict.get('found_primary_disk_storage_capacity', 0)
+-            vm_disk_size = int(found_primary_disk_size) - int(host_allocated_disk_gb)
++            allocated_host_value = self.calculate_host_allocated_value_from_percent(total_value=found_primary_disk_size,
++                                                                                    allocated_value=host_allocated_disk_gb)
++            vm_disk_size = int(found_primary_disk_size - allocated_host_value)
+             resource_dict["primary_partition_size"] = str(vm_disk_size) + "G"
+             return True, resource_dict
+         except Exception as err:  # pylint: disable=broad-except

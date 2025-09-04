@@ -1,0 +1,14 @@
+# vim
+*.swp
+
+# emacs backups/locks
+*~
+*#
+.#*
+
+# Python
+*.pyc
+*.pyo
+
+# Secrets
+mrproper.env

@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+
+import mrproper.rate_my_mr_gitlab
+
+if __name__ == '__main__':
+    mrproper.rate_my_mr_gitlab.main()

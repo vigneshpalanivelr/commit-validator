@@ -1,0 +1,4 @@
+deb http://deb-mi.internal.com/ubuntu xenial main restricted
+deb http://deb-mi.internal.com/ubuntu xenial-updates main restricted
+deb http://deb-mi.internal.com/ubuntu xenial universe
+deb http://deb-mi.internal.com/ubuntu xenial-updates universe

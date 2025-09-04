@@ -1,0 +1,6 @@
+#!/bin/bash
+
+set -e
+
+docker build -t mr-checker-vp-test mrproper
+docker build -t mrproper-webhook-vp-test webhook-server

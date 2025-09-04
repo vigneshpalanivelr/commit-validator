@@ -1,0 +1,30 @@
+#!/bin/bash
+
+here=$(realpath "$(dirname "$0")")
+
+if ! [ -f "$here/mrproper.env" ]; then
+	echo "ERROR: Please create a mrproper.env file containing:"
+	echo "       GITLAB_ACCESS_TOKEN=thesecrettoken"
+	exit 1
+fi
+
+# Handle restart argument
+if [ "$1" = "restart" ]; then
+	echo "Stopping existing mrproper-webhook-vp-test containers..."
+	docker ps --filter "ancestor=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker stop
+	echo "Removing stopped mrproper-webhook-vp-test containers..."
+	docker ps -a --filter "ancestor=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker rm
+fi
+
+# Check if mrproper-webhook-vp-test is already running
+if docker ps --filter "ancestor=mrproper-webhook-vp-test" --format "{{.ID}}" | grep -q .; then
+	echo "ERROR: mrproper-webhook-vp-test container is already running"
+	echo "Running mrproper-webhook-vp-test containers:"
+	docker ps --filter "ancestor=mrproper-webhook-vp-test" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}"
+	echo ""
+	echo "Use '$0 restart' to stop existing mrproper-webhook-vp-test containers and restart"
+	exit 1
+fi
+
+echo "Starting mrproper-webhook server on port 9912..."
+docker run -d --restart=unless-stopped --publish 9912:9912 -t --volume /var/run/docker.sock:/var/run/docker.sock --volume "$here/mrproper.env:/mrproper.env" mrproper-webhook-vp-test
