@@ -138,6 +138,7 @@ flowchart LR
 - **Concurrent Processing**: Handles 100+ simultaneous MR validations
 - **Container Isolation**: Each validation runs independently
 - **Auto-Scaling**: Dynamic container spawning based on load
+- **Reliability**: Retry logic with exponential backoff for transient failures
 
 ### Smart Analysis
 - **AI-Powered Reviews**: Bug detection, security analysis, performance insights
@@ -149,6 +150,39 @@ flowchart LR
 - **Automatic Discussion Updates**: Results posted as MR comments
 - **Resolution Management**: Auto-resolves when issues are fixed
 - **Approval Cross-Reference**: Validates reviewer trailers against GitLab approvals
+- **Request Correlation**: End-to-end tracing with unique REQUEST_ID
+
+## Recent Improvements (2025-11-03)
+
+### Reliability Enhancements
+✅ **AI Service Retry Logic**: Exponential backoff (2s, 4s, 8s) for up to 3 retries on failures
+✅ **Proper Error Handling**: All exceptions now logged with stack traces (no silent failures)
+✅ **Git Command Validation**: Return codes checked and failures properly reported
+✅ **Resource Cleanup**: Temporary files properly cleaned up with thread-safe handling
+
+### Debugging & Monitoring
+✅ **Request Correlation**: REQUEST_ID now propagates from webhook through all validator logs
+✅ **Enhanced Logging**: All log messages include `[REQUEST_ID]` prefix for easy tracing
+✅ **Log Rotation**: Automatic rotation at 50-100MB to prevent disk exhaustion
+✅ **Accurate Status**: AI validation failures now properly reported (no false positives)
+
+### Configuration Flexibility
+✅ **Configurable AI Service**: Set `AI_SERVICE_URL` environment variable for custom AI endpoints
+✅ **Documented Rating Systems**: Clear documentation on simple vs comprehensive rating calculations
+
+### Log File Naming Convention
+```
+/home/docker/tmp/mr-validator-logs/
+├── webhook-server.log                              # Webhook activities (100MB × 5 backups)
+├── rate-my-mr-{REQUEST_ID}-{container}.log        # Per-request logs (50MB × 3 backups)
+├── gitlab-api-{REQUEST_ID}-{container}.log        # API interactions
+```
+
+**Trace requests across all logs**:
+```bash
+# Find all activity for specific request
+grep "a1b2c3d4" /home/docker/tmp/mr-validator-logs/*.log
+```
 
 ## Installation & Setup
 
@@ -192,6 +226,9 @@ Required packages:
 #### Environment Configuration (`mrproper.env`)
 ```bash
 GITLAB_ACCESS_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+
+# Optional: Custom AI service URL (defaults to 10.31.88.29:6006)
+AI_SERVICE_URL=http://custom-ai-server:8080/generate
 ```
 
 #### Project-Specific Configuration (`.mr-proper.conf`)
@@ -544,10 +581,10 @@ curl -X POST http://10.31.88.29:6006/generate \
 ### Debug Logging Locations
 ```
 Host: /home/docker/tmp/mr-validator-logs/
-├── webhook-server.log                           # Webhook activities
-├── rate-my-mr-mr-rate-my-mr-272-a1b2c3d4.log    # AI analysis logs
-├── gitlab-api-mr-clang-format-272-i9j0k1l2.log  # GitLab API calls
-└── ...                                          # Per-container logs
+├── webhook-server.log                              # Webhook activities with REQUEST_ID
+├── rate-my-mr-{REQUEST_ID}-{container}.log        # AI analysis logs per request
+├── gitlab-api-{REQUEST_ID}-{container}.log        # GitLab API calls per request
+└── ...                                             # Per-container logs
 ```
 
 #### Comprehensive Debug Workflow
@@ -558,7 +595,8 @@ Host: /home/docker/tmp/mr-validator-logs/
 ssh docker@10.X.X.X "tail -f /home/docker/tmp/mr-validator-logs/webhook-server.log"
 
 # Look for log entries like:
-# [20240904_123456_789123] === NEW WEBHOOK REQUEST ===
+# [a1b2c3d4] === NEW WEBHOOK REQUEST ===
+# REQUEST_ID: 20241103_103045_a1b2c3d4
 ```
 
 **Step 2: Verify Container Launch**
@@ -589,12 +627,26 @@ ssh docker@10.X.X.X "docker ps --format 'table {{.Names}}\t{{.Status}}' | grep m
 ```
 
 #### Request ID Tracking
-Each webhook request gets a unique ID like `20240904_123456_789123`.
+Each webhook request gets a unique ID like `20241103_103045_a1b2c3d4` (REQUEST_ID_SHORT: `a1b2c3d4`).
+
+**How it works**:
+1. Webhook generates REQUEST_ID: `20241103_103045_a1b2c3d4`
+2. Passes to containers via environment variable
+3. All logs include `[a1b2c3d4]` prefix for correlation
 
 **Find all logs for specific request**:
 ```bash
-ssh docker@10.X.X.X "grep '789123' /home/docker/tmp/mr-validator-logs/webhook-server.log"
+# Trace entire request flow
+ssh docker@10.X.X.X "grep 'a1b2c3d4' /home/docker/tmp/mr-validator-logs/*.log"
+
+# View specific request log file
+ssh docker@10.X.X.X "cat /home/docker/tmp/mr-validator-logs/rate-my-mr-a1b2c3d4-*.log"
 ```
+
+**Benefits**:
+- End-to-end tracing from webhook → validator → GitLab
+- Easy debugging: one grep command shows entire flow
+- Correlate errors across multiple log files
 
 ### Performance Monitoring
 ```bash

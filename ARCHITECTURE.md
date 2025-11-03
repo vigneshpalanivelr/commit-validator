@@ -369,13 +369,47 @@ flowchart LR
 - **Memory Usage**: ~200MB per validation container
 
 ### Logging Architecture
+
+**Enhanced with Request Correlation (2025-11-03)**:
 ```
 Host: /home/docker/tmp/mr-validator-logs/
-├── webhook-server.log                           # Webhook activities
-├── rate-my-mr-mr-rate-my-mr-272-a1b2c3d4.log  # Per-container logs
-├── gitlab-api-mr-clang-format-272-i9j0k1l2.log # Unique per validation
+├── webhook-server.log                              # Webhook activities, 100MB×5 backups
+├── rate-my-mr-{REQUEST_ID}-{container}.log        # Per-request logs, 50MB×3 backups
+├── gitlab-api-{REQUEST_ID}-{container}.log        # API interactions, 50MB×3 backups
 └── ...
 ```
+
+**Key Features**:
+- **Request Correlation**: REQUEST_ID propagates from webhook to all validator logs
+- **Log Rotation**: Automatic rotation prevents disk exhaustion
+- **Structured Format**: All logs include `[REQUEST_ID_SHORT]` prefix for easy tracing
+- **Thread-Safe**: Unique filenames prevent race conditions in concurrent validations
+
+**Tracing Requests**:
+```bash
+# Find all activity for a specific request
+grep "a1b2c3d4" /home/docker/tmp/mr-validator-logs/*.log
+
+# View specific request log
+cat /home/docker/tmp/mr-validator-logs/rate-my-mr-a1b2c3d4-*.log
+```
+
+### Recent Reliability Improvements (2025-11-03)
+
+#### Error Handling Enhancements
+- **No Silent Failures**: All exceptions logged with stack traces
+- **Proper Status Reporting**: AI service failures accurately reflected in validation reports
+- **Git Command Validation**: Return codes checked and errors properly reported
+
+#### Retry Logic & Resilience
+- **AI Service Retry**: Exponential backoff (2s, 4s, 8s) for up to 3 retries
+- **Smart Retry Strategy**: Retries on timeouts, connection errors, 5xx, and 429; no retry on 4xx client errors
+- **Graceful Degradation**: Continues with partial results if non-critical services fail
+
+#### Resource Management
+- **Temporary File Cleanup**: Thread-safe handling with proper cleanup in finally blocks
+- **No File Leaks**: All temporary files removed even on error paths
+- **Memory Efficient**: Optimized diff processing and resource allocation
 
 
 ## Phase 3: Rate my MR Deep Dive
