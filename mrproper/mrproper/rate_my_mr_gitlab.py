@@ -7,6 +7,7 @@ import urllib.parse
 import os
 
 import logging
+import logging.handlers
 
 # Ensure log directory exists
 os.makedirs('/home/docker/tmp/mr-validator-logs', exist_ok=True)
@@ -19,15 +20,29 @@ REQUEST_ID_SHORT = REQUEST_ID.split('_')[-1][:8] if REQUEST_ID != 'unknown' else
 container_id = os.environ.get('HOSTNAME', 'unknown')
 log_filename = f'/home/docker/tmp/mr-validator-logs/rate-my-mr-{REQUEST_ID_SHORT}-{container_id}.log'
 
-# Setup logging for rate_my_mr_gitlab with REQUEST_ID in format
+# Setup logging for rate_my_mr_gitlab with REQUEST_ID in format and rotation
+file_handler = logging.handlers.RotatingFileHandler(
+    log_filename,
+    maxBytes=50 * 1024 * 1024,  # 50 MB per request log
+    backupCount=3,
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter(
+    f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(logging.Formatter(
+    f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+
 logging.basicConfig(
     level=logging.DEBUG,
-    format=f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(log_filename),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -284,37 +299,49 @@ def handle_mr(proj, mriid):
         raise
 
     # Setup temporary git repository for analysis
-    print("[DEBUG] Setting up temporary git repository...")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Setting up temporary git repository...")
     with tempfile.TemporaryDirectory() as tdir:
-        print(f"[DEBUG] Temporary directory: {tdir}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Temporary directory: {tdir}")
 
-        print("[DEBUG] Initializing git repository...")
-        subprocess.call(["git", "init", "-q"], cwd=tdir)
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Initializing git repository...")
+        init_result = subprocess.call(["git", "init", "-q"], cwd=tdir)
+        if init_result != 0:
+            error_msg = f"Git init failed with return code {init_result}"
+            logger.error(f"[{REQUEST_ID_SHORT}] {error_msg}")
+            print(f"[{REQUEST_ID_SHORT}] [ERROR] {error_msg}")
+            raise RuntimeError(error_msg)
 
         clone_url = gitlab.get_clone_url(proj.replace('%2F', '/'))
-        print(f"[DEBUG] Clone URL: {clone_url}")
-        print(f"[DEBUG] Target branch: {mr.target_branch}")
-        print(f"[DEBUG] Source branch: {mr.source_branch}")
-        print(f"[DEBUG] Fetching MR head: merge-requests/{mr.iid}/head and target branch: {mr.target_branch}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Clone URL: {clone_url}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Target branch: {mr.target_branch}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Source branch: {mr.source_branch}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Fetching MR head: merge-requests/{mr.iid}/head and target branch: {mr.target_branch}")
 
         try:
             # Fetch both MR head and target branch for proper diff
-            subprocess.call(["git", "fetch", "-q",
+            fetch_result = subprocess.call(["git", "fetch", "-q",
                              "--depth={}".format(max(len(mrcommits), 100)),
                              clone_url,
                              "merge-requests/{}/head".format(mr.iid),
                              "{}:{}".format(mr.target_branch, mr.target_branch)],
                             cwd=tdir)
-            print("[DEBUG] Git fetch completed successfully")
+            if fetch_result != 0:
+                error_msg = f"Git fetch failed with return code {fetch_result}"
+                logger.error(f"[{REQUEST_ID_SHORT}] {error_msg}")
+                print(f"[{REQUEST_ID_SHORT}] [ERROR] {error_msg}")
+                raise RuntimeError(error_msg)
+            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git fetch completed successfully")
+        except RuntimeError:
+            raise
         except Exception as fetch_error:
-            print(f"[DEBUG] Git fetch failed: {fetch_error}")
+            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git fetch failed: {fetch_error}")
             raise
 
         try:
             subprocess.check_output(["git", "checkout", "-q", "-b", "check", "FETCH_HEAD"], cwd=tdir)
-            print("[DEBUG] Git checkout completed successfully")
+            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git checkout completed successfully")
         except Exception as checkout_error:
-            print(f"[DEBUG] Git checkout failed: {checkout_error}")
+            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git checkout failed: {checkout_error}")
             raise
 
         # Create diff file for analysis
@@ -452,8 +479,11 @@ This may be due to:
 Please check the system status and retry.
 """
             gitlab.update_discussion(proj, mriid, HEADER, error_report, False)
-        except:  # noqa: E722
-            pass  # Don't fail on error reporting failure
+            logger.info(f"[{REQUEST_ID_SHORT}] Posted error report to GitLab for MR {mriid}")
+        except Exception as posting_error:
+            # Log the error but don't fail the entire process
+            logger.error(f"[{REQUEST_ID_SHORT}] Failed to post error report to GitLab: {posting_error}", exc_info=True)
+            print(f"[{REQUEST_ID_SHORT}] WARNING: Could not post error to GitLab: {posting_error}")
 
         sys.exit(1)
 

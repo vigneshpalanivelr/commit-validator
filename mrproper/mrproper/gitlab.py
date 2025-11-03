@@ -4,6 +4,7 @@ import os
 import requests
 import sys
 import logging
+import logging.handlers
 
 
 GITLAB_HOST = 'git.internal.com'
@@ -19,15 +20,29 @@ REQUEST_ID_SHORT = REQUEST_ID.split('_')[-1][:8] if REQUEST_ID != 'unknown' else
 container_id = os.environ.get('HOSTNAME', 'unknown')
 log_filename = f'/home/docker/tmp/mr-validator-logs/gitlab-api-{REQUEST_ID_SHORT}-{container_id}.log'
 
-# Setup logging with REQUEST_ID in format
+# Setup logging with REQUEST_ID in format and rotation
+file_handler = logging.handlers.RotatingFileHandler(
+    log_filename,
+    maxBytes=50 * 1024 * 1024,  # 50 MB per request log
+    backupCount=3,
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter(
+    f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(logging.Formatter(
+    f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+
 logging.basicConfig(
     level=logging.DEBUG,
-    format=f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(log_filename),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 

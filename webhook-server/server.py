@@ -4,6 +4,7 @@ import pprint
 import subprocess
 import tornado.web
 import logging
+import logging.handlers
 import datetime
 
 
@@ -135,16 +136,30 @@ app = tornado.web.Application(routes, **settings)
 def main():
     # Ensure log directory exists
     os.makedirs('/home/docker/tmp/mr-validator-logs', exist_ok=True)
-    
-    # Setup logging
+
+    # Setup logging with rotation (100 MB per file, keep 5 backups)
+    file_handler = logging.handlers.RotatingFileHandler(
+        '/home/docker/tmp/mr-validator-logs/webhook-server.log',
+        maxBytes=100 * 1024 * 1024,  # 100 MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(filename)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(filename)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s - %(filename)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.FileHandler('/home/docker/tmp/mr-validator-logs/webhook-server.log'),
-            logging.StreamHandler()
-        ]
+        handlers=[file_handler, console_handler]
     )
     logger = logging.getLogger(__name__)
     

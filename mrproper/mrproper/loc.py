@@ -1,4 +1,6 @@
 import re
+import tempfile
+import os
 from radon.raw import analyze
 from prettytable import PrettyTable
 
@@ -32,24 +34,43 @@ class LOCCalculator:
         return metrics
 
     def calculate_loc(self):
+        """
+        Calculate lines of code from diff file using temporary files with proper cleanup.
+
+        Returns:
+            tuple: (success: bool, data: dict or error_message: str)
+        """
+        # Use NamedTemporaryFile with delete=False for thread safety and proper cleanup
+        modified_file = None
+        removed_file = None
+
         try:
             # Extract modified code from the diff output
             modified_code, removed_code = self.extract_modified_code()
 
-            # Save the modified code to a temporary file
-            with open('modified_code.py', 'w') as temp_file:
-                temp_file.write(modified_code)
+            # Create temporary files with proper cleanup
+            modified_file = tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.py',
+                prefix='modified_code_',
+                delete=False
+            )
+            modified_file.write(modified_code)
+            modified_file.close()
 
-            with open('removed_code.py', 'w') as temp_file:
-                temp_file.write(removed_code)
-            added_lines = self.get_radon_raw_metrics('modified_code.py')
-            # print("Added lines info: {}".format(str(added_lines)))
-            removed_lines = self.get_radon_raw_metrics('removed_code.py')
-            # print("Removed lines info: {}".format(str(removed_lines)))
+            removed_file = tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.py',
+                prefix='removed_code_',
+                delete=False
+            )
+            removed_file.write(removed_code)
+            removed_file.close()
+
+            # Analyze the temporary files
+            added_lines = self.get_radon_raw_metrics(modified_file.name)
+            removed_lines = self.get_radon_raw_metrics(removed_file.name)
             net_change = added_lines.sloc - removed_lines.sloc
-
-            # if success:
-            # from prettytable import PrettyTable
 
             # Create a PrettyTable object
             table = PrettyTable()
@@ -64,8 +85,6 @@ class LOCCalculator:
 
             # Print the table
             print(table)
-            # else:
-            #     print(f"Failed to calculate LOC: {loc_data}")
 
             return True, {
                 'lines_of_code_added': added_lines.sloc,
@@ -74,6 +93,18 @@ class LOCCalculator:
             }
         except Exception as err:
             return False, str(err)
+        finally:
+            # Clean up temporary files
+            if modified_file is not None:
+                try:
+                    os.unlink(modified_file.name)
+                except Exception:
+                    pass  # Ignore cleanup errors
+            if removed_file is not None:
+                try:
+                    os.unlink(removed_file.name)
+                except Exception:
+                    pass  # Ignore cleanup errors
 
 # loc_cal = LOCCalculator('diff_output2.txt')
 # success, loc_data = loc_cal.calculate_loc()

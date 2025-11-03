@@ -4,6 +4,7 @@ from prettytable import PrettyTable
 import re
 import json
 import os
+import time
 from .loc import LOCCalculator
 from .params import RMMConstants, RMMWeights, RMMLimits, get_all_applicable_checks
 from .cyclomatic_complexity import CyclomaticComplexityCalculator
@@ -16,48 +17,81 @@ def print_banner(title):
     print(f"{banner}\n{title.center(90)}\n{banner}")
 
 
-def send_request(payload, url=RMMConstants.agent_url.value):
+def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
+    """
+    Send request to AI service with retry logic.
+
+    Args:
+        payload: JSON payload to send
+        url: AI service URL
+        max_retries: Maximum number of retry attempts (default: 3)
+
+    Returns:
+        tuple: (status_code, response_json) or (None/status_code, error_message)
+    """
     print(f"[DEBUG] AI Service Request - URL: {url}")
     print(f"[DEBUG] AI Service Request - Payload size: {len(str(payload))} chars")
-    print(f"[DEBUG] AI Service Request - Timeout: 120 seconds")
+    print(f"[DEBUG] AI Service Request - Timeout: 120 seconds, Max retries: {max_retries}")
 
-    try:
-        print("[DEBUG] Sending POST request to AI service...")
-        resp = requests.post(url, json=payload, timeout=120)
-        print(f"[DEBUG] AI Service Response - Status Code: {resp.status_code}")
-        print(f"[DEBUG] AI Service Response - Content Length: {len(resp.content)}")
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                # Exponential backoff: 2s, 4s, 8s
+                wait_time = 2 ** attempt
+                print(f"[DEBUG] Retry attempt {attempt + 1}/{max_retries} after {wait_time}s wait...")
+                time.sleep(wait_time)
 
-        # Raise an error for bad responses (4xx and 5xx)
-        resp.raise_for_status()
+            print(f"[DEBUG] Sending POST request to AI service (attempt {attempt + 1}/{max_retries})...")
+            resp = requests.post(url, json=payload, timeout=120)
+            print(f"[DEBUG] AI Service Response - Status Code: {resp.status_code}")
+            print(f"[DEBUG] AI Service Response - Content Length: {len(resp.content)}")
 
-        response_json = resp.json()
-        print(f"[DEBUG] AI Service Response - JSON parsed successfully")
-        return resp.status_code, response_json
+            # Raise an error for bad responses (4xx and 5xx)
+            resp.raise_for_status()
 
-    except requests.exceptions.HTTPError as http_err:
-        print(f"[DEBUG] AI Service HTTP Error: {http_err}")
-        print(f"[DEBUG] Response content: {resp.content[:500] if 'resp' in locals() else 'No response'}")
-        return resp.status_code, str(http_err)
+            response_json = resp.json()
+            print(f"[DEBUG] AI Service Response - JSON parsed successfully")
+            return resp.status_code, response_json
 
-    except requests.exceptions.ConnectionError as conn_err:
-        print(f"[DEBUG] AI Service Connection Error: {conn_err}")
-        print("[DEBUG] This suggests the AI service is not reachable")
-        return None, f"Connection failed: {str(conn_err)}"
+        except requests.exceptions.HTTPError as http_err:
+            print(f"[DEBUG] AI Service HTTP Error (attempt {attempt + 1}): {http_err}")
+            print(f"[DEBUG] Response content: {resp.content[:500] if 'resp' in locals() else 'No response'}")
 
-    except requests.exceptions.Timeout as timeout_err:
-        print(f"[DEBUG] AI Service Timeout Error: {timeout_err}")
-        print("[DEBUG] AI service took longer than 120 seconds to respond")
-        return None, f"Timeout after 120s: {str(timeout_err)}"
+            # Don't retry on 4xx client errors (except 429 rate limit)
+            if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                print(f"[DEBUG] Client error {resp.status_code}, not retrying")
+                return resp.status_code, str(http_err)
 
-    except requests.exceptions.RequestException as req_err:
-        print(f"[DEBUG] AI Service Request Error: {req_err}")
-        print(f"[DEBUG] Error type: {type(req_err).__name__}")
-        return None, str(req_err)
+            # Retry on 5xx server errors and 429 rate limit
+            if attempt == max_retries - 1:
+                return resp.status_code, str(http_err)
 
-    except Exception as err:
-        print(f"[DEBUG] AI Service Unexpected Error: {err}")
-        print(f"[DEBUG] Error type: {type(err).__name__}")
-        return False, str(err)
+        except requests.exceptions.ConnectionError as conn_err:
+            print(f"[DEBUG] AI Service Connection Error (attempt {attempt + 1}): {conn_err}")
+            if attempt == max_retries - 1:
+                print(f"[DEBUG] All {max_retries} attempts failed - AI service not reachable")
+                return None, f"Connection failed after {max_retries} attempts: {str(conn_err)}"
+
+        except requests.exceptions.Timeout as timeout_err:
+            print(f"[DEBUG] AI Service Timeout (attempt {attempt + 1}): {timeout_err}")
+            if attempt == max_retries - 1:
+                print(f"[DEBUG] All {max_retries} attempts timed out")
+                return None, f"Timeout after {max_retries} attempts: {str(timeout_err)}"
+
+        except requests.exceptions.RequestException as req_err:
+            print(f"[DEBUG] AI Service Request Error (attempt {attempt + 1}): {req_err}")
+            print(f"[DEBUG] Error type: {type(req_err).__name__}")
+            if attempt == max_retries - 1:
+                return None, str(req_err)
+
+        except Exception as err:
+            print(f"[DEBUG] AI Service Unexpected Error (attempt {attempt + 1}): {err}")
+            print(f"[DEBUG] Error type: {type(err).__name__}")
+            if attempt == max_retries - 1:
+                return None, str(err)
+
+    # Should not reach here, but just in case
+    return None, f"Failed after {max_retries} attempts"
 
 
 def generate_summary(file_path):
@@ -82,13 +116,18 @@ def generate_summary(file_path):
     print_banner("Summary of the Merge Request")
     if status_code != 200:
         print(f"Failed to generate summary: {code_summary}")
+        return False, code_summary
     else:
-        content = code_summary.get('content')[0]
-        content_type = content.get('type')
-        content_body = content.get(content_type)
-        print(content_body)
-        print("\n")
-    return True, None
+        try:
+            content = code_summary.get('content')[0]
+            content_type = content.get('type')
+            content_body = content.get(content_type)
+            print(content_body)
+            print("\n")
+            return True, content_body
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"Failed to parse AI response: {e}")
+            return False, str(e)
 
 def generate_initial_code_review(file_path):
     with open(file_path, 'r') as file:
@@ -109,14 +148,19 @@ def generate_initial_code_review(file_path):
     print_banner("Initial Review")
     status_code, initial_review = send_request(payload1)
     if status_code != 200:
-        print(f"Failed to generate summary: {initial_review}")
+        print(f"Failed to generate code review: {initial_review}")
+        return False, initial_review
     else:
-        content = initial_review.get('content')[0]
-        content_type = content.get('type')
-        content_body = content.get(content_type)
-        print(content_body)
-        print("\n")
-    return True, None
+        try:
+            content = initial_review.get('content')[0]
+            content_type = content.get('type')
+            content_body = content.get(content_type)
+            print(content_body)
+            print("\n")
+            return True, content_body
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"Failed to parse AI response: {e}")
+            return False, str(e)
 
 def generate_lint_disable_report(file_path):
     try:
@@ -258,17 +302,38 @@ def cal_ss(file_path):
 
 
 def cal_rating(net_loc, lint_disable_count):
-    """Simple rating calculation function for GitLab integration"""
+    """
+    Simple rating calculation function for GitLab integration.
+
+    This is a lightweight version used for real-time MR validation.
+    For more comprehensive analysis including cyclomatic complexity and
+    security scanning, see CalRating class in cal_rating.py (currently
+    not used in GitLab webhook mode due to execution time constraints).
+
+    Args:
+        net_loc: Net lines of code change (added - removed)
+        lint_disable_count: Number of new lint disable statements
+
+    Returns:
+        int: Rating score from 0 to 5
+
+    Scoring:
+        - Start with 5 points (perfect score)
+        - Deduct 1 point if net LOC > 500 (too large)
+        - Deduct 1 point if lint_disable_count > 0 (code smell)
+        - Minimum score: 0
+        - Score < 3: MR should be blocked for review
+    """
     score = 5  # Start with perfect score
-    
+
     # Deduct for high LOC
     if net_loc > 500:
         score -= 1
-        
+
     # Deduct for lint disables
     if lint_disable_count > 0:
         score -= 1
-        
+
     return max(score, 0)  # Don't go below 0
 
 def main():
