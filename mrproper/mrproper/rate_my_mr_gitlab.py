@@ -11,14 +11,18 @@ import logging
 # Ensure log directory exists
 os.makedirs('/home/docker/tmp/mr-validator-logs', exist_ok=True)
 
-# Generate unique log filename per container
-container_id = os.environ.get('HOSTNAME', 'unknown')
-log_filename = f'/home/docker/tmp/mr-validator-logs/rate-my-mr-{container_id}.log'
+# Get REQUEST_ID from environment (passed from webhook server)
+REQUEST_ID = os.environ.get('REQUEST_ID', 'unknown')
+REQUEST_ID_SHORT = REQUEST_ID.split('_')[-1][:8] if REQUEST_ID != 'unknown' else 'unknown'
 
-# Setup logging for rate_my_mr_gitlab
+# Generate unique log filename per container (using REQUEST_ID for correlation)
+container_id = os.environ.get('HOSTNAME', 'unknown')
+log_filename = f'/home/docker/tmp/mr-validator-logs/rate-my-mr-{REQUEST_ID_SHORT}-{container_id}.log'
+
+# Setup logging for rate_my_mr_gitlab with REQUEST_ID in format
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(filename)s - %(levelname)s - %(message)s',
+    format=f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.FileHandler(log_filename),
@@ -53,8 +57,8 @@ def create_diff_from_mr(proj, mriid, checkout_dir, mr_data, mrcommits):
     Returns:
         str: Path to created diff file
     """
-    print(f"[DEBUG] Creating diff for MR {mriid} in project {proj}")
-    print(f"[DEBUG] Working directory: {checkout_dir}")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Creating diff for MR {mriid} in project {proj}")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Working directory: {checkout_dir}")
 
     try:
         # Check current branch and remotes
@@ -253,23 +257,23 @@ def handle_mr(proj, mriid):
         logger.error(f"Error checking environment: {e}")
         token_available = False
     
-    print("[DEBUG] ===== STARTING MR ANALYSIS =====")
-    print(f"[DEBUG] Project: {proj}")
-    print(f"[DEBUG] MR IID: {mriid}")
-    print_banner(f"Processing MR {mriid} in project {proj}")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] ===== STARTING MR ANALYSIS =====")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Project: {proj}")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] MR IID: {mriid}")
+    print_banner(f"[{REQUEST_ID_SHORT}] Processing MR {mriid} in project {proj}")
 
     try:
-        print("[DEBUG] Fetching MR data from GitLab API...")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Fetching MR data from GitLab API...")
         # Fetch MR data from GitLab
         mr = gitlab.gitlab("/projects/{}/merge_requests/{}".format(proj, mriid))
-        print(f"[DEBUG] MR fetched successfully: {mr.title}")
-        print(f"[DEBUG] MR state: {mr.state}")
-        print(f"[DEBUG] Source branch: {mr.source_branch}")
-        print(f"[DEBUG] Target branch: {mr.target_branch}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] MR fetched successfully: {mr.title}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] MR state: {mr.state}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Source branch: {mr.source_branch}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Target branch: {mr.target_branch}")
 
-        print("[DEBUG] Fetching MR commits...")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Fetching MR commits...")
         mrcommits = gitlab.gitlab("/projects/{}/merge_requests/{}/commits".format(proj, mr.iid))
-        print(f"[DEBUG] Found {len(mrcommits)} commits in MR {mriid}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Found {len(mrcommits)} commits in MR {mriid}")
 
         for i, commit in enumerate(mrcommits):
             print(f"[DEBUG] Commit {i+1}: {commit.id[:8]} - {commit.title}")
@@ -344,25 +348,25 @@ Please check the MR manually and retry if necessary.
             print(f"[DEBUG] Could not read diff file: {read_error}")
 
         # Run analysis pipeline
-        print_banner("Starting Analysis Pipeline")
-        print("[DEBUG] ===== ANALYSIS PIPELINE START =====")
+        print_banner(f"[{REQUEST_ID_SHORT}] Starting Analysis Pipeline")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] ===== ANALYSIS PIPELINE START =====")
 
         # 1. Generate AI summary
-        print("[DEBUG] Step 1: Generating AI summary...")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 1: Generating AI summary...")
         summary_success, _ = generate_summary(diff_file_path)
-        print(f"[DEBUG] AI summary result: {'SUCCESS' if summary_success else 'FAILED'}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] AI summary result: {'SUCCESS' if summary_success else 'FAILED'}")
 
         # 2. Generate AI code review
-        print("[DEBUG] Step 2: Generating AI code review...")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 2: Generating AI code review...")
         review_success, _ = generate_initial_code_review(diff_file_path)
-        print(f"[DEBUG] AI code review result: {'SUCCESS' if review_success else 'FAILED'}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] AI code review result: {'SUCCESS' if review_success else 'FAILED'}")
 
         # 3. Calculate LOC metrics
-        print("[DEBUG] Step 3: Calculating LOC metrics...")
-        print_banner("LOC Analysis")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 3: Calculating LOC metrics...")
+        print_banner(f"[{REQUEST_ID_SHORT}] LOC Analysis")
         loc_calculator = LOCCalculator(diff_file_path)
         loc_success, loc_data = loc_calculator.calculate_loc()
-        print(f"[DEBUG] LOC analysis result: {'SUCCESS' if loc_success else 'FAILED'}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] LOC analysis result: {'SUCCESS' if loc_success else 'FAILED'}")
 
         if not loc_success:
             print(f"[DEBUG] LOC analysis failed: {loc_data}")
@@ -371,44 +375,44 @@ Please check the MR manually and retry if necessary.
             print(f"[DEBUG] LOC data: {loc_data}")
 
         # 4. Analyze lint disables
-        print("[DEBUG] Step 4: Analyzing lint disables...")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 4: Analyzing lint disables...")
         lint_success, lint_data = generate_lint_disable_report(diff_file_path)
-        print(f"[DEBUG] Lint analysis result: {'SUCCESS' if lint_success else 'FAILED'}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Lint analysis result: {'SUCCESS' if lint_success else 'FAILED'}")
 
         if not lint_success:
-            print(f"[DEBUG] Lint analysis failed: {lint_data}")
+            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Lint analysis failed: {lint_data}")
             lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
         else:
-            print(f"[DEBUG] Lint data: {lint_data}")
+            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Lint data: {lint_data}")
 
         # 5. Calculate overall rating
-        print("[DEBUG] Step 5: Calculating overall rating...")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 5: Calculating overall rating...")
         rating_score = cal_rating(
             loc_data.get('net_lines_of_code_change', 0),
             lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0
         )
-        print(f"[DEBUG] Final rating calculated: {rating_score}/5")
-        print_banner(f"Final Rating: {rating_score}/5")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Final rating calculated: {rating_score}/5")
+        print_banner(f"[{REQUEST_ID_SHORT}] Final Rating: {rating_score}/5")
 
     # Format report for GitLab
-    print("[DEBUG] Step 6: Formatting report for GitLab...")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 6: Formatting report for GitLab...")
     report_body, must_not_be_resolved = format_rating_report(
         summary_success, review_success, loc_data, lint_data, rating_score
     )
-    print(f"[DEBUG] Report formatted, must_not_be_resolved: {must_not_be_resolved}")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Report formatted, must_not_be_resolved: {must_not_be_resolved}")
 
     # Post results to GitLab
-    print("[DEBUG] Step 7: Posting results to GitLab...")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 7: Posting results to GitLab...")
     try:
         gitlab.update_discussion(proj, mriid, HEADER, report_body, must_not_be_resolved)
-        print("[DEBUG] Successfully posted report to GitLab")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Successfully posted report to GitLab")
     except Exception as gitlab_error:
-        print(f"[DEBUG] Failed to post to GitLab: {gitlab_error}")
-        print(f"[DEBUG] Error type: {type(gitlab_error).__name__}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Failed to post to GitLab: {gitlab_error}")
+        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Error type: {type(gitlab_error).__name__}")
         raise
 
-    print("[DEBUG] ===== MR ANALYSIS COMPLETED =====")
-    print("MR quality assessment completed successfully")
+    print(f"[{REQUEST_ID_SHORT}] [DEBUG] ===== MR ANALYSIS COMPLETED =====")
+    print(f"[{REQUEST_ID_SHORT}] MR quality assessment completed successfully")
 
 
 def main():

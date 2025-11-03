@@ -1,7 +1,9 @@
 from enum import Enum
+import os
 
 class RMMConstants(Enum):
-    agent_url = "http://10.31.88.29:6006/generate"
+    # Default AI service URL - can be overridden by AI_SERVICE_URL env var
+    agent_url = os.environ.get('AI_SERVICE_URL', 'http://10.31.88.29:6006/generate')
 
 class RMMLimits(Enum):
     MAX_LOC = 500

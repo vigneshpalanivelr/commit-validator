@@ -11,14 +11,18 @@ GITLAB_HOST = 'git.internal.com'
 # Ensure log directory exists
 os.makedirs('/home/docker/tmp/mr-validator-logs', exist_ok=True)
 
-# Generate unique log filename per container
-container_id = os.environ.get('HOSTNAME', 'unknown')
-log_filename = f'/home/docker/tmp/mr-validator-logs/gitlab-api-{container_id}.log'
+# Get REQUEST_ID from environment (passed from webhook server)
+REQUEST_ID = os.environ.get('REQUEST_ID', 'unknown')
+REQUEST_ID_SHORT = REQUEST_ID.split('_')[-1][:8] if REQUEST_ID != 'unknown' else 'unknown'
 
-# Setup logging
+# Generate unique log filename per container (using REQUEST_ID for correlation)
+container_id = os.environ.get('HOSTNAME', 'unknown')
+log_filename = f'/home/docker/tmp/mr-validator-logs/gitlab-api-{REQUEST_ID_SHORT}-{container_id}.log'
+
+# Setup logging with REQUEST_ID in format
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(filename)s - %(levelname)s - %(message)s',
+    format=f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.FileHandler(log_filename),

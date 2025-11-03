@@ -85,10 +85,11 @@ class GitLabWebHookHandler(tornado.web.RequestHandler):
 
                 for i, c in enumerate(checkers):
                     logger.info(f"[{request_id_short}] Starting checker {i+1}/{len(checkers)}: {c}")
-                    
+
                     docker_cmd = [
                         "docker", "run", "-d", "--rm",
                         "--env-file", "mrproper.env",
+                        "--env", f"REQUEST_ID={request_id}",
                         "--log-driver=syslog",
                         "--volume", "/home/docker/tmp/mr-validator-logs:/home/docker/tmp/mr-validator-logs",
                         "--name", f"mr-{c}-{data.object_attributes.iid}-{request_id_short}",
