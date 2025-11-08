@@ -44,6 +44,7 @@
 | **Debugging** | [DEBUGGING_GUIDE REQUEST_ID](./DEBUGGING_GUIDE.md#request_id-your-debugging-superpower) |
 | **Testing** | [Comprehensive Test Plan](./COMPREHENSIVE_TEST_PLAN.md) |
 | **Architecture** | [ARCHITECTURE System Overview](./ARCHITECTURE.md#system-overview) |
+| **Logging Configuration** | [Logging Configuration Guide](./LOGGING_CONFIGURATION.md) |
 
 ---
 
