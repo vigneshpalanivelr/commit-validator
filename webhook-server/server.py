@@ -87,12 +87,28 @@ class GitLabWebHookHandler(tornado.web.RequestHandler):
                 for i, c in enumerate(checkers):
                     logger.info(f"[{request_id_short}] Starting checker {i+1}/{len(checkers)}: {c}")
 
+                    # Get logging configuration from environment
+                    log_dir = os.environ.get('LOG_DIR', '/home/docker/tmp/mr-validator-logs')
+                    log_level = os.environ.get('LOG_LEVEL', 'DEBUG')
+                    log_max_bytes = os.environ.get('LOG_MAX_BYTES', '52428800')
+                    log_backup_count = os.environ.get('LOG_BACKUP_COUNT', '3')
+                    log_structure = os.environ.get('LOG_STRUCTURE', 'organized')
+
                     docker_cmd = [
                         "docker", "run", "-d", "--rm",
                         "--env-file", "mrproper.env",
                         "--env", f"REQUEST_ID={request_id}",
+                        "--env", f"PROJECT_ID={data.project.path_with_namespace}",
+                        "--env", f"MR_IID={data.object_attributes.iid}",
+                        # Pass logging configuration
+                        "--env", f"LOG_DIR={log_dir}",
+                        "--env", f"LOG_LEVEL={log_level}",
+                        "--env", f"LOG_MAX_BYTES={log_max_bytes}",
+                        "--env", f"LOG_BACKUP_COUNT={log_backup_count}",
+                        "--env", f"LOG_STRUCTURE={log_structure}",
                         "--log-driver=syslog",
-                        "--volume", "/home/docker/tmp/mr-validator-logs:/home/docker/tmp/mr-validator-logs",
+                        # Mount log directory
+                        "--volume", f"{log_dir}:{log_dir}",
                         "--name", f"mr-{c}-{data.object_attributes.iid}-{request_id_short}",
                         "mr-checker-vp-test", c,
                         data.project.path_with_namespace,
