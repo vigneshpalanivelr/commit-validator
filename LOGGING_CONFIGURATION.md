@@ -746,7 +746,6 @@ tail -f $LOG_DIR/validations/$(date +%Y-%m-%d)/**/**/rate-my-mr-*.log
 
 ## See Also
 
-- **Implementation Plan**: [LOGGING_IMPROVEMENT_PLAN.md](./LOGGING_IMPROVEMENT_PLAN.md)
 - **Debugging**: [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md)
 - **Architecture**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 

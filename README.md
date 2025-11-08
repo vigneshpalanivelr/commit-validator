@@ -188,8 +188,6 @@ grep "a1b2c3d4" /home/docker/tmp/mr-validator-logs/*.log
 
 **New here?** Continue with [Quick Start](#quick-start) above or [Installation & Setup](#installation--setup) below.
 
-**Full Documentation Roadmap**: See [DOCUMENTATION.md](./DOCUMENTATION.md)
-
 **Quick Links**:
 - 🏗️ System Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md)
 - 🐛 Troubleshooting & Debugging: [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md)
