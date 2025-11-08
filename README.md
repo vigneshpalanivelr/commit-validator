@@ -184,6 +184,18 @@ flowchart LR
 grep "a1b2c3d4" /home/docker/tmp/mr-validator-logs/*.log
 ```
 
+## 📚 Documentation
+
+**New here?** Continue with [Quick Start](#quick-start) above or [Installation & Setup](#installation--setup) below.
+
+**Full Documentation Roadmap**: See [DOCUMENTATION.md](./DOCUMENTATION.md)
+
+**Quick Links**:
+- 🏗️ System Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md)
+- 🐛 Troubleshooting & Debugging: [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md)
+- 🔌 LLM Adapter Setup: [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md)
+- 🧪 Testing Procedures: [COMPREHENSIVE_TEST_PLAN.md](./COMPREHENSIVE_TEST_PLAN.md)
+
 ## Installation & Setup
 
 ### Build Process
@@ -263,6 +275,55 @@ mr-validator/
 ├── README.md                      # Complete user guide
 └── ARCHITECTURE.md                # Technical documentation
 ```
+
+## LLM Adapter Configuration (New)
+
+The system supports two modes for AI service integration with automatic routing:
+
+### Mode 1: Legacy Direct Connection (Current Default)
+
+Connects directly to AI service without authentication:
+
+```bash
+# In mrproper.env
+GITLAB_ACCESS_TOKEN=glpat-your-token-here
+AI_SERVICE_URL=http://10.31.88.29:6006/generate
+```
+
+**Use when**: You're using the existing AI service
+
+### Mode 2: LLM Adapter with JWT Authentication (NEW)
+
+Routes through intermediary BFA service with JWT token authentication:
+
+```bash
+# In mrproper.env
+GITLAB_ACCESS_TOKEN=glpat-your-token-here
+BFA_HOST=api-gateway.internal.com
+API_TIMEOUT=120                      # Optional: default 120 seconds
+BFA_TOKEN_KEY=eyJhbGci...            # Optional: pre-configured token
+```
+
+**Use when**: You're integrating with the new BFA intermediary service
+
+**Features**:
+- ✅ JWT token authentication with automatic token acquisition
+- ✅ Token acquired once per MR, reused for all 4 AI calls (efficient)
+- ✅ Automatic retry with exponential backoff (2s, 4s, 8s)
+- ✅ Support for pre-configured tokens (bypasses token API)
+- ✅ 100% backward compatible - falls back to legacy mode when BFA_HOST not set
+
+**How it works**:
+1. System detects `BFA_HOST` environment variable at startup
+2. If set → uses new adapter with JWT authentication
+3. If not set → uses legacy direct connection (unchanged)
+4. No code changes or restarts needed - automatic routing
+
+**Documentation**: See [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md) for complete details
+
+**Status**: ✅ Implementation complete, awaiting BFA API format specifications
+
+---
 
 ## Configuration
 

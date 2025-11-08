@@ -46,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from . import gitlab
+from .. import gitlab  # Import from parent directory (common module)
 from .rate_my_mr import (
     generate_summary, generate_initial_code_review,
     generate_lint_disable_report, cal_rating, print_banner
