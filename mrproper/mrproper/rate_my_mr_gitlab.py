@@ -277,6 +277,12 @@ def handle_mr(proj, mriid):
     print(f"[{REQUEST_ID_SHORT}] [DEBUG] MR IID: {mriid}")
     print_banner(f"[{REQUEST_ID_SHORT}] Processing MR {mriid} in project {proj}")
 
+    # Set PROJECT_ID and MR_IID for LLM adapter JWT token generation
+    # These are needed if BFA_HOST is configured (new LLM adapter)
+    os.environ['PROJECT_ID'] = proj
+    os.environ['MR_IID'] = str(mriid)
+    logger.info(f"Set environment for LLM adapter: PROJECT_ID={proj}, MR_IID={mriid}")
+
     try:
         print(f"[{REQUEST_ID_SHORT}] [DEBUG] Fetching MR data from GitLab API...")
         # Fetch MR data from GitLab

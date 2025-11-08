@@ -2,8 +2,23 @@ from enum import Enum
 import os
 
 class RMMConstants(Enum):
-    # Default AI service URL - can be overridden by AI_SERVICE_URL env var
+    # AI Service Configuration
+    # ======================
+
+    # Legacy direct AI service URL - can be overridden by AI_SERVICE_URL env var
+    # Used when BFA_HOST is NOT configured
     agent_url = os.environ.get('AI_SERVICE_URL', 'http://10.31.88.29:6006/generate')
+
+    # New LLM Adapter Configuration (used when BFA_HOST is set)
+    # ======================
+    # BFA_HOST: Hostname for the BFA intermediary service (e.g., "api-gateway.internal.com")
+    # BFA_TOKEN_KEY: (Optional) Pre-configured JWT token - skips token API call if set
+    # API_TIMEOUT: Timeout in seconds for LLM API calls (default: 120)
+    # PROJECT_ID: Project identifier (set automatically by rate_my_mr_gitlab.py)
+    # MR_IID: MR IID (set automatically by rate_my_mr_gitlab.py)
+    #
+    # When BFA_HOST is set, the system automatically uses the new LLM adapter
+    # with JWT authentication instead of the legacy direct connection.
 
 class RMMLimits(Enum):
     MAX_LOC = 500

@@ -11,6 +11,13 @@ from .cyclomatic_complexity import CyclomaticComplexityCalculator
 from .security_scan import SecurityScanner
 from .cal_rating import CalRating
 
+# Import LLM adapter for new API integration
+try:
+    from . import llm_adapter
+    HAS_LLM_ADAPTER = True
+except ImportError:
+    HAS_LLM_ADAPTER = False
+
 
 def print_banner(title):
     banner = "=" * 90  # Adjust the length as needed
@@ -21,14 +28,26 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
     """
     Send request to AI service with retry logic.
 
+    Automatically routes to new LLM adapter if BFA_HOST is configured,
+    otherwise uses legacy direct connection.
+
     Args:
         payload: JSON payload to send
-        url: AI service URL
+        url: AI service URL (ignored if using LLM adapter)
         max_retries: Maximum number of retry attempts (default: 3)
 
     Returns:
         tuple: (status_code, response_json) or (None/status_code, error_message)
     """
+    # Check if we should use the new LLM adapter
+    use_adapter = HAS_LLM_ADAPTER and os.environ.get('BFA_HOST')
+
+    if use_adapter:
+        print(f"[DEBUG] Using new LLM adapter (BFA_HOST is configured)")
+        return llm_adapter.send_request(payload, url, max_retries)
+
+    # Legacy direct connection (original implementation)
+    print(f"[DEBUG] Using legacy direct AI service connection")
     print(f"[DEBUG] AI Service Request - URL: {url}")
     print(f"[DEBUG] AI Service Request - Payload size: {len(str(payload))} chars")
     print(f"[DEBUG] AI Service Request - Timeout: 120 seconds, Max retries: {max_retries}")
