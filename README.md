@@ -195,6 +195,33 @@ grep "a1b2c3d4" /home/docker/tmp/mr-validator-logs/*.log
 - 🐛 Troubleshooting & Debugging: [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md)
 - 🔌 LLM Adapter Setup: [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md)
 - 🧪 Testing Procedures: [COMPREHENSIVE_TEST_PLAN.md](./COMPREHENSIVE_TEST_PLAN.md)
+- 📋 Logging Configuration: [LOGGING_CONFIGURATION.md](./LOGGING_CONFIGURATION.md)
+
+## 📋 Structured Logging
+
+The system uses **pipe-separated, structured logging** for easy parsing and visual scanning:
+
+**Log Format**:
+```
+YYYY-MM-DD HH:MM:SS.mmm | LEVEL    | module.name                    | REQ_ID   | Message | key=value
+```
+
+**Example Output**:
+```
+2025-11-08 14:23:45.123 | INFO     | rate_my_mr.gitlab              | 4adcc17d | Starting MR analysis | project=vigneshpalanivelr/commit-validator mr_iid=42
+2025-11-08 14:23:46.012 | INFO     | rate_my_mr.llm_adapter         | 4adcc17d | JWT token acquired | duration_ms=223
+2025-11-08 14:23:48.456 | INFO     | rate_my_mr.rate_my_mr          | 4adcc17d | AI summary completed | success=True
+2025-11-08 14:23:49.678 | INFO     | rate_my_mr.gitlab              | 4adcc17d | MR validation complete | score=7.5 duration_ms=4555
+```
+
+**Features**:
+- ✅ Millisecond precision timestamps
+- ✅ Column-aligned format for visual scanning
+- ✅ Correlation IDs (REQUEST_ID_SHORT) for tracing
+- ✅ Structured key=value pairs
+- ✅ Organized log structure (by date/project/MR)
+
+**Configuration**: See [LOGGING_CONFIGURATION.md](./LOGGING_CONFIGURATION.md) for detailed setup
 
 ## Installation & Setup
 
