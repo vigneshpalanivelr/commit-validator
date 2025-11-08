@@ -6,45 +6,24 @@ import tempfile
 import urllib.parse
 import os
 
-import logging
-import logging.handlers
-
-# Ensure log directory exists
-os.makedirs('/home/docker/tmp/mr-validator-logs', exist_ok=True)
+# Import new structured logging
+from .logging_config import setup_logging
 
 # Get REQUEST_ID from environment (passed from webhook server)
 REQUEST_ID = os.environ.get('REQUEST_ID', 'unknown')
 REQUEST_ID_SHORT = REQUEST_ID.split('_')[-1][:8] if REQUEST_ID != 'unknown' else 'unknown'
 
-# Generate unique log filename per container (using REQUEST_ID for correlation)
-container_id = os.environ.get('HOSTNAME', 'unknown')
-log_filename = f'/home/docker/tmp/mr-validator-logs/rate-my-mr-{REQUEST_ID_SHORT}-{container_id}.log'
+# Get project and MR for organized logging
+PROJECT_ID = os.environ.get('PROJECT_ID', 'unknown')
+MR_IID = os.environ.get('MR_IID', '0')
 
-# Setup logging for rate_my_mr_gitlab with REQUEST_ID in format and rotation
-file_handler = logging.handlers.RotatingFileHandler(
-    log_filename,
-    maxBytes=50 * 1024 * 1024,  # 50 MB per request log
-    backupCount=3,
-    encoding='utf-8'
+# Setup structured logging with pipe-separated format
+logger, slog = setup_logging(
+    log_type='validator',
+    request_id=REQUEST_ID,
+    project=PROJECT_ID,
+    mr_iid=MR_IID
 )
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(logging.Formatter(
-    f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-))
-
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
-console_handler.setFormatter(logging.Formatter(
-    f'%(asctime)s - [{REQUEST_ID_SHORT}] - %(filename)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-))
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    handlers=[file_handler, console_handler]
-)
-logger = logging.getLogger(__name__)
 
 from .. import gitlab  # Import from parent directory (common module)
 from .rate_my_mr import (
@@ -72,73 +51,67 @@ def create_diff_from_mr(proj, mriid, checkout_dir, mr_data, mrcommits):
     Returns:
         str: Path to created diff file
     """
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Creating diff for MR {mriid} in project {proj}")
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Working directory: {checkout_dir}")
+    slog.debug("Creating diff for MR", mr_iid=mriid, working_dir=checkout_dir)
 
     try:
         # Check current branch and remotes
-        print("[DEBUG] Checking git status...")
+        slog.debug("Checking git status")
         try:
             branches = subprocess.check_output(["git", "branch", "-a"], cwd=checkout_dir).decode("utf-8")
-            print(f"[DEBUG] Available branches:\n{branches}")
+            slog.debug("Available branches", count=len(branches.split('\n')))
         except subprocess.CalledProcessError as e:
-            print(f"[DEBUG] Could not list branches: {e}")
+            slog.warning("Could not list branches", error=str(e))
 
         # Get diff between MR base and head using target branch
         target_branch = mr_data.target_branch
-        print(f"[DEBUG] Attempting git diff {target_branch}...HEAD")
+        slog.debug("Generating git diff", target_branch=target_branch, method="target...HEAD")
         diff_output = subprocess.check_output([
             "git", "diff", "--no-color", f"{target_branch}...HEAD"
         ], cwd=checkout_dir).decode("utf-8")
 
-        print(f"[DEBUG] Generated diff length: {len(diff_output)} characters")
+        slog.info("Git diff generated", size_chars=len(diff_output))
 
         # Save diff to temporary file
         diff_file_path = os.path.join(checkout_dir, "mr_diff.txt")
         with open(diff_file_path, 'w') as diff_file:
             diff_file.write(diff_output)
 
-        print(f"[DEBUG] Saved diff to: {diff_file_path}")
-        print(f"[DEBUG] Diff file exists: {os.path.exists(diff_file_path)}")
-
+        slog.info("Diff saved to file", path=diff_file_path, exists=os.path.exists(diff_file_path))
         return diff_file_path
 
     except subprocess.CalledProcessError as e:
-        print(f"[DEBUG] Primary diff method failed: {e}")
-        print(f"[DEBUG] Attempting fallback diff methods...")
+        slog.warning("Primary diff method failed", error=str(e))
+        slog.debug("Attempting fallback diff methods")
         # Fallback: create diff using commit-based approach
         try:
-            print("[DEBUG] Using commit list from GitLab API...")
-            # Get commits from the MR data we already fetched
-            print(f"[DEBUG] Found {len(mrcommits)} commits in MR")
+            slog.debug("Using commit list from GitLab API", commits=len(mrcommits))
 
             if len(mrcommits) >= 2:
                 first_commit = mrcommits[0].id
                 last_commit = mrcommits[-1].id
-                print(f"[DEBUG] Attempting diff between {first_commit[:8]}..{last_commit[:8]}")
+                slog.debug("Multi-commit diff", first=first_commit[:8], last=last_commit[:8])
                 diff_output = subprocess.check_output([
                     "git", "diff", "--no-color", f"{first_commit}..{last_commit}"
                 ], cwd=checkout_dir).decode("utf-8")
             else:
                 # Single commit diff
                 commit_id = mrcommits[0].id
-                print(f"[DEBUG] Single commit MR, using git show for {commit_id[:8]}")
+                slog.debug("Single commit MR", commit=commit_id[:8], method="git_show")
                 diff_output = subprocess.check_output([
                     "git", "show", "--no-color", commit_id
                 ], cwd=checkout_dir).decode("utf-8")
 
-            print(f"[DEBUG] Fallback diff generated, length: {len(diff_output)} characters")
+            slog.info("Fallback diff generated", size_chars=len(diff_output))
 
             diff_file_path = os.path.join(checkout_dir, "mr_diff.txt")
             with open(diff_file_path, 'w') as diff_file:
                 diff_file.write(diff_output)
 
-            print(f"[DEBUG] Fallback diff saved to: {diff_file_path}")
+            slog.info("Fallback diff saved", path=diff_file_path)
             return diff_file_path
 
         except Exception as fallback_error:
-            print(f"[DEBUG] Fallback diff creation failed: {fallback_error}")
-            print(f"[DEBUG] Error type: {type(fallback_error).__name__}")
+            slog.error("Fallback diff creation failed", error=str(fallback_error), error_type=type(fallback_error).__name__)
             return None
 
 
@@ -258,104 +231,96 @@ def handle_mr(proj, mriid):
         mriid: Merge request IID
     """
 
-    logger.info("===== STARTING MR ANALYSIS =====")
-    logger.info(f"GitLab host configured as: {gitlab.GITLAB_HOST}")
-    logger.info(f"Project: {proj}")
-    logger.info(f"MR IID: {mriid}")
+    slog.info("Starting MR analysis", project=proj, mr_iid=mriid, gitlab_host=gitlab.GITLAB_HOST)
+
     try:
         gitlab_token = os.environ.get('GITLAB_ACCESS_TOKEN', '')
         token_available = bool(gitlab_token)
-        logger.info(f"Environment check - GITLAB_ACCESS_TOKEN available: {token_available}")
+        slog.debug("Environment check", token_available=token_available)
         if token_available:
-            logger.info(f"Token starts with: {gitlab_token[:10]}...")
+            logger.debug(f"Token starts with: {gitlab_token[:10]}...")
     except Exception as e:
-        logger.error(f"Error checking environment: {e}")
+        slog.error("Error checking environment", error=str(e))
         token_available = False
-    
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] ===== STARTING MR ANALYSIS =====")
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Project: {proj}")
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] MR IID: {mriid}")
+
     print_banner(f"[{REQUEST_ID_SHORT}] Processing MR {mriid} in project {proj}")
 
     # Set PROJECT_ID and MR_IID for LLM adapter JWT token generation
     # These are needed if BFA_HOST is configured (new LLM adapter)
     os.environ['PROJECT_ID'] = proj
     os.environ['MR_IID'] = str(mriid)
-    logger.info(f"Set environment for LLM adapter: PROJECT_ID={proj}, MR_IID={mriid}")
+    slog.debug("Environment configured for LLM adapter", project_id=proj, mr_iid=mriid)
 
     try:
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Fetching MR data from GitLab API...")
+        slog.debug("Fetching MR data from GitLab API", project=proj, mr_iid=mriid)
         # Fetch MR data from GitLab
         mr = gitlab.gitlab("/projects/{}/merge_requests/{}".format(proj, mriid))
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] MR fetched successfully: {mr.title}")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] MR state: {mr.state}")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Source branch: {mr.source_branch}")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Target branch: {mr.target_branch}")
+        slog.info("MR fetched successfully",
+                  title=mr.title,
+                  state=mr.state,
+                  source_branch=mr.source_branch,
+                  target_branch=mr.target_branch)
 
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Fetching MR commits...")
+        slog.debug("Fetching MR commits", project=proj, mr_iid=mriid)
         mrcommits = gitlab.gitlab("/projects/{}/merge_requests/{}/commits".format(proj, mr.iid))
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Found {len(mrcommits)} commits in MR {mriid}")
+        slog.info("MR commits fetched", commit_count=len(mrcommits))
 
         for i, commit in enumerate(mrcommits):
-            print(f"[DEBUG] Commit {i+1}: {commit.id[:8]} - {commit.title}")
+            slog.debug(f"Commit {i+1}", commit_id=commit.id[:8], title=commit.title)
 
     except Exception as api_error:
-        print(f"[DEBUG] GitLab API error: {api_error}")
-        print(f"[DEBUG] Error type: {type(api_error).__name__}")
+        slog.error("GitLab API error", error=str(api_error), error_type=type(api_error).__name__)
         raise
 
     # Setup temporary git repository for analysis
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Setting up temporary git repository...")
+    slog.debug("Setting up temporary git repository")
     with tempfile.TemporaryDirectory() as tdir:
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Temporary directory: {tdir}")
+        slog.debug("Temporary directory created", path=tdir)
 
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Initializing git repository...")
+        slog.debug("Initializing git repository")
         init_result = subprocess.call(["git", "init", "-q"], cwd=tdir)
         if init_result != 0:
-            error_msg = f"Git init failed with return code {init_result}"
-            logger.error(f"[{REQUEST_ID_SHORT}] {error_msg}")
-            print(f"[{REQUEST_ID_SHORT}] [ERROR] {error_msg}")
-            raise RuntimeError(error_msg)
+            slog.error("Git init failed", return_code=init_result)
+            raise RuntimeError(f"Git init failed with return code {init_result}")
 
         clone_url = gitlab.get_clone_url(proj.replace('%2F', '/'))
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Clone URL: {clone_url}")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Target branch: {mr.target_branch}")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Source branch: {mr.source_branch}")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Fetching MR head: merge-requests/{mr.iid}/head and target branch: {mr.target_branch}")
+        slog.debug("Fetching git repository",
+                   target_branch=mr.target_branch,
+                   source_branch=mr.source_branch,
+                   mr_ref=f"merge-requests/{mr.iid}/head")
 
         try:
             # Fetch both MR head and target branch for proper diff
+            fetch_depth = max(len(mrcommits), 100)
             fetch_result = subprocess.call(["git", "fetch", "-q",
-                             "--depth={}".format(max(len(mrcommits), 100)),
+                             f"--depth={fetch_depth}",
                              clone_url,
-                             "merge-requests/{}/head".format(mr.iid),
-                             "{}:{}".format(mr.target_branch, mr.target_branch)],
+                             f"merge-requests/{mr.iid}/head",
+                             f"{mr.target_branch}:{mr.target_branch}"],
                             cwd=tdir)
             if fetch_result != 0:
-                error_msg = f"Git fetch failed with return code {fetch_result}"
-                logger.error(f"[{REQUEST_ID_SHORT}] {error_msg}")
-                print(f"[{REQUEST_ID_SHORT}] [ERROR] {error_msg}")
-                raise RuntimeError(error_msg)
-            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git fetch completed successfully")
+                slog.error("Git fetch failed", return_code=fetch_result, depth=fetch_depth)
+                raise RuntimeError(f"Git fetch failed with return code {fetch_result}")
+            slog.info("Git fetch completed", depth=fetch_depth, commits=len(mrcommits))
         except RuntimeError:
             raise
         except Exception as fetch_error:
-            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git fetch failed: {fetch_error}")
+            slog.error("Git fetch exception", error=str(fetch_error), error_type=type(fetch_error).__name__)
             raise
 
         try:
             subprocess.check_output(["git", "checkout", "-q", "-b", "check", "FETCH_HEAD"], cwd=tdir)
-            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git checkout completed successfully")
+            slog.debug("Git checkout completed", branch="check")
         except Exception as checkout_error:
-            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Git checkout failed: {checkout_error}")
+            slog.error("Git checkout failed", error=str(checkout_error), error_type=type(checkout_error).__name__)
             raise
 
         # Create diff file for analysis
-        print("[DEBUG] Creating diff file for analysis...")
+        slog.debug("Creating diff file for analysis")
         diff_file_path = create_diff_from_mr(proj, mriid, tdir, mr, mrcommits)
 
         if not diff_file_path or not os.path.exists(diff_file_path):
-            print("[DEBUG] ERROR: Could not create diff file for analysis")
+            slog.error("Could not create diff file for analysis")
             # Post error report to GitLab
             error_report = """
 ## :x: MR Quality Assessment Failed
@@ -367,7 +332,7 @@ Unable to generate diff for analysis. This could be due to:
 
 Please check the MR manually and retry if necessary.
 """
-            print("[DEBUG] Posting error report to GitLab...")
+            slog.info("Posting error report to GitLab")
             gitlab.update_discussion(proj, mriid, HEADER, error_report, False)
             return
 
@@ -375,77 +340,77 @@ Please check the MR manually and retry if necessary.
         try:
             with open(diff_file_path, 'r') as f:
                 diff_content = f.read()
-                print(f"[DEBUG] Diff file content preview (first 500 chars):")
-                print(f"[DEBUG] {diff_content[:500]}...")
+                slog.debug("Diff file created", size_bytes=len(diff_content), preview=diff_content[:200])
         except Exception as read_error:
-            print(f"[DEBUG] Could not read diff file: {read_error}")
+            slog.warning("Could not read diff file", error=str(read_error))
 
         # Run analysis pipeline
         print_banner(f"[{REQUEST_ID_SHORT}] Starting Analysis Pipeline")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] ===== ANALYSIS PIPELINE START =====")
+        slog.info("Analysis pipeline started")
 
         # 1. Generate AI summary
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 1: Generating AI summary...")
+        slog.debug("Step 1: Generating AI summary")
         summary_success, _ = generate_summary(diff_file_path)
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] AI summary result: {'SUCCESS' if summary_success else 'FAILED'}")
+        slog.info("AI summary completed", success=summary_success)
 
         # 2. Generate AI code review
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 2: Generating AI code review...")
+        slog.debug("Step 2: Generating AI code review")
         review_success, _ = generate_initial_code_review(diff_file_path)
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] AI code review result: {'SUCCESS' if review_success else 'FAILED'}")
+        slog.info("AI code review completed", success=review_success)
 
         # 3. Calculate LOC metrics
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 3: Calculating LOC metrics...")
+        slog.debug("Step 3: Calculating LOC metrics")
         print_banner(f"[{REQUEST_ID_SHORT}] LOC Analysis")
         loc_calculator = LOCCalculator(diff_file_path)
         loc_success, loc_data = loc_calculator.calculate_loc()
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] LOC analysis result: {'SUCCESS' if loc_success else 'FAILED'}")
 
         if not loc_success:
-            print(f"[DEBUG] LOC analysis failed: {loc_data}")
+            slog.warning("LOC analysis failed", error=loc_data)
             loc_data = {'lines_of_code_added': 0, 'lines_of_code_removed': 0, 'net_lines_of_code_change': 0}
         else:
-            print(f"[DEBUG] LOC data: {loc_data}")
+            slog.info("LOC analysis completed",
+                      added=loc_data.get('lines_of_code_added', 0),
+                      removed=loc_data.get('lines_of_code_removed', 0),
+                      net=loc_data.get('net_lines_of_code_change', 0))
 
         # 4. Analyze lint disables
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 4: Analyzing lint disables...")
+        slog.debug("Step 4: Analyzing lint disables")
         lint_success, lint_data = generate_lint_disable_report(diff_file_path)
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Lint analysis result: {'SUCCESS' if lint_success else 'FAILED'}")
 
         if not lint_success:
-            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Lint analysis failed: {lint_data}")
+            slog.warning("Lint analysis failed", error=lint_data)
             lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
         else:
-            print(f"[{REQUEST_ID_SHORT}] [DEBUG] Lint data: {lint_data}")
+            slog.info("Lint analysis completed",
+                      num_disables=lint_data.get('num_lint_disable', 0),
+                      disabled_lints=lint_data.get('lints_that_disabled', ''))
 
         # 5. Calculate overall rating
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 5: Calculating overall rating...")
+        slog.debug("Step 5: Calculating overall rating")
         rating_score = cal_rating(
             loc_data.get('net_lines_of_code_change', 0),
             lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0
         )
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Final rating calculated: {rating_score}/5")
+        slog.info("Final rating calculated", score=rating_score, max_score=5)
         print_banner(f"[{REQUEST_ID_SHORT}] Final Rating: {rating_score}/5")
 
     # Format report for GitLab
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 6: Formatting report for GitLab...")
+    slog.debug("Step 6: Formatting report for GitLab")
     report_body, must_not_be_resolved = format_rating_report(
         summary_success, review_success, loc_data, lint_data, rating_score
     )
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Report formatted, must_not_be_resolved: {must_not_be_resolved}")
+    slog.debug("Report formatted", must_not_be_resolved=must_not_be_resolved)
 
     # Post results to GitLab
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] Step 7: Posting results to GitLab...")
+    slog.debug("Step 7: Posting results to GitLab")
     try:
         gitlab.update_discussion(proj, mriid, HEADER, report_body, must_not_be_resolved)
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Successfully posted report to GitLab")
+        slog.info("Report posted to GitLab successfully")
     except Exception as gitlab_error:
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Failed to post to GitLab: {gitlab_error}")
-        print(f"[{REQUEST_ID_SHORT}] [DEBUG] Error type: {type(gitlab_error).__name__}")
+        slog.error("Failed to post to GitLab", error=str(gitlab_error), error_type=type(gitlab_error).__name__)
         raise
 
-    print(f"[{REQUEST_ID_SHORT}] [DEBUG] ===== MR ANALYSIS COMPLETED =====")
-    print(f"[{REQUEST_ID_SHORT}] MR quality assessment completed successfully")
+    slog.info("MR analysis completed successfully")
 
 
 def main():
@@ -485,10 +450,10 @@ This may be due to:
 Please check the system status and retry.
 """
             gitlab.update_discussion(proj, mriid, HEADER, error_report, False)
-            logger.info(f"[{REQUEST_ID_SHORT}] Posted error report to GitLab for MR {mriid}")
+            slog.info("Posted error report to GitLab", mr_iid=mriid)
         except Exception as posting_error:
             # Log the error but don't fail the entire process
-            logger.error(f"[{REQUEST_ID_SHORT}] Failed to post error report to GitLab: {posting_error}", exc_info=True)
+            slog.error("Failed to post error report to GitLab", error=str(posting_error), error_type=type(posting_error).__name__)
             print(f"[{REQUEST_ID_SHORT}] WARNING: Could not post error to GitLab: {posting_error}")
 
         sys.exit(1)

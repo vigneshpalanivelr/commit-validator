@@ -39,6 +39,34 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Helper for structured logging
+class StructuredLog:
+    """Lightweight structured logging helper."""
+    @staticmethod
+    def _fmt(msg, **kwargs):
+        if kwargs:
+            fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
+            return f'{msg} | {fields}'
+        return msg
+
+    @staticmethod
+    def debug(msg, **kwargs):
+        logger.debug(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def info(msg, **kwargs):
+        logger.info(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def warning(msg, **kwargs):
+        logger.warning(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def error(msg, **kwargs):
+        logger.error(StructuredLog._fmt(msg, **kwargs))
+
+slog = StructuredLog
+
 
 class LLMAdapter:
     """
@@ -61,8 +89,10 @@ class LLMAdapter:
         if not self.bfa_host:
             raise ValueError("BFA_HOST environment variable is required")
 
-        logger.info(f"[DEBUG] LLM Adapter initialized - BFA_HOST: {self.bfa_host}, "
-                   f"Timeout: {self.api_timeout}s, Token pre-configured: {bool(self.bfa_token_key)}")
+        slog.info("LLM Adapter initialized",
+                  bfa_host=self.bfa_host,
+                  timeout_s=self.api_timeout,
+                  token_preconfigured=bool(self.bfa_token_key))
 
     def _get_project_and_mr(self):
         """Get project and MR IID from environment."""
@@ -70,8 +100,9 @@ class LLMAdapter:
         mr_iid = os.environ.get('MR_IID', '')
 
         if not project_id or not mr_iid:
-            logger.warning(f"[DEBUG] PROJECT_ID or MR_IID not set in environment. "
-                          f"PROJECT_ID={project_id}, MR_IID={mr_iid}")
+            slog.warning("PROJECT_ID or MR_IID not set in environment",
+                         project_id=project_id,
+                         mr_iid=mr_iid)
             return None, None
 
         return project_id, mr_iid
@@ -92,12 +123,12 @@ class LLMAdapter:
 
         # If token is pre-configured, use it
         if self.bfa_token_key:
-            logger.info(f"[DEBUG] Using pre-configured BFA_TOKEN_KEY")
+            slog.info("Using pre-configured BFA_TOKEN_KEY")
             return self.bfa_token_key
 
         # Check if we already have a token for this project/MR
         if LLMAdapter._session_token and LLMAdapter._token_project_mr == current_project_mr:
-            logger.info(f"[DEBUG] Reusing existing session token for {current_project_mr}")
+            slog.info("Reusing existing session token", project_mr=current_project_mr)
             return LLMAdapter._session_token
 
         # Need to get a new token
@@ -107,8 +138,7 @@ class LLMAdapter:
         subject = f"rate-my-mr-{project_id}-{mr_iid}"
         token_url = f"http://{self.bfa_host}:8000/api/token"
 
-        logger.info(f"[DEBUG] Requesting JWT token from {token_url}")
-        logger.info(f"[DEBUG] Token subject: {subject}")
+        slog.debug("Requesting JWT token", token_url=token_url, subject=subject)
 
         try:
             response = requests.post(
@@ -118,7 +148,7 @@ class LLMAdapter:
                 timeout=30
             )
 
-            logger.info(f"[DEBUG] Token API response status: {response.status_code}")
+            slog.debug("Token API response", status_code=response.status_code)
             response.raise_for_status()
 
             token_data = response.json()
@@ -131,13 +161,14 @@ class LLMAdapter:
             LLMAdapter._session_token = token
             LLMAdapter._token_project_mr = current_project_mr
 
-            logger.info(f"[DEBUG] JWT token acquired successfully for {current_project_mr}")
-            logger.info(f"[DEBUG] Token (first 20 chars): {token[:20]}...")
+            slog.info("JWT token acquired successfully",
+                      project_mr=current_project_mr,
+                      token_prefix=token[:20])
 
             return token
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"[ERROR] Failed to acquire JWT token: {e}")
+            slog.error("Failed to acquire JWT token", error=str(e))
             raise
 
     def _transform_request(self, payload):
@@ -163,7 +194,7 @@ class LLMAdapter:
         """
         # TODO: Implement actual transformation based on new API specification
         # For now, pass through as-is
-        logger.info(f"[DEBUG] Request transformation - keeping original format (TODO: update when format provided)")
+        slog.debug("Request transformation", status="passthrough", payload_size=len(str(payload)))
         return payload
 
     def _transform_response(self, response_data):
@@ -188,7 +219,7 @@ class LLMAdapter:
         """
         # TODO: Implement actual transformation based on new API specification
         # For now, pass through as-is
-        logger.info(f"[DEBUG] Response transformation - keeping original format (TODO: update when format provided)")
+        slog.debug("Response transformation", status="passthrough")
         return response_data
 
     def send_request(self, payload, url=None, max_retries=None):
@@ -209,15 +240,17 @@ class LLMAdapter:
         if url is None:
             url = f"http://{self.bfa_host}:8000/api/rate-my-mr"
 
-        logger.info(f"[DEBUG] LLM Adapter - URL: {url}")
-        logger.info(f"[DEBUG] LLM Adapter - Timeout: {self.api_timeout}s, Max retries: {max_retries}")
-        logger.info(f"[DEBUG] LLM Adapter - Payload size: {len(str(payload))} chars")
+        slog.debug("LLM Adapter request",
+                   url=url,
+                   timeout_s=self.api_timeout,
+                   max_retries=max_retries,
+                   payload_size=len(str(payload)))
 
         # Get or create JWT token
         try:
             token = self._get_or_create_token()
         except Exception as e:
-            logger.error(f"[ERROR] Failed to get JWT token: {e}")
+            slog.error("Failed to get JWT token", error=str(e))
             return None, f"JWT token acquisition failed: {str(e)}"
 
         # Prepare headers with JWT token
@@ -235,10 +268,10 @@ class LLMAdapter:
                 if attempt > 0:
                     # Exponential backoff: 2s, 4s, 8s
                     wait_time = 2 ** attempt
-                    logger.info(f"[DEBUG] Retry attempt {attempt + 1}/{max_retries} after {wait_time}s wait...")
+                    slog.debug("Retry attempt", attempt=f"{attempt + 1}/{max_retries}", wait_time_s=wait_time)
                     time.sleep(wait_time)
 
-                logger.info(f"[DEBUG] Sending POST request to LLM API (attempt {attempt + 1}/{max_retries})...")
+                slog.debug("Sending POST request to LLM API", attempt=f"{attempt + 1}/{max_retries}")
 
                 resp = requests.post(
                     url,
@@ -247,34 +280,35 @@ class LLMAdapter:
                     timeout=self.api_timeout
                 )
 
-                logger.info(f"[DEBUG] LLM API Response - Status Code: {resp.status_code}")
-                logger.info(f"[DEBUG] LLM API Response - Content Length: {len(resp.content)}")
+                slog.debug("LLM API response", status_code=resp.status_code, content_length=len(resp.content))
 
                 # Raise an error for bad responses (4xx and 5xx)
                 resp.raise_for_status()
 
                 # Parse and transform response
                 response_data = resp.json()
-                logger.info(f"[DEBUG] LLM API Response - JSON parsed successfully")
+                slog.debug("LLM API JSON parsed successfully")
 
                 transformed_response = self._transform_response(response_data)
 
                 return resp.status_code, transformed_response
 
             except requests.exceptions.HTTPError as http_err:
-                logger.error(f"[DEBUG] LLM API HTTP Error (attempt {attempt + 1}): {http_err}")
-                logger.error(f"[DEBUG] Response content: {resp.content[:500] if 'resp' in locals() else 'No response'}")
+                slog.error("LLM API HTTP error",
+                           attempt=f"{attempt + 1}/{max_retries}",
+                           status_code=resp.status_code,
+                           error=str(http_err))
 
                 # Special handling for authentication errors
                 if resp.status_code == 401:
-                    logger.error(f"[ERROR] JWT token authentication failed (401 Unauthorized)")
+                    slog.error("JWT token authentication failed", status_code=401)
                     # Clear cached token so next call will get a new one
                     LLMAdapter._session_token = None
                     LLMAdapter._token_project_mr = None
 
                 # Don't retry on 4xx client errors (except 429 rate limit)
                 if 400 <= resp.status_code < 500 and resp.status_code != 429:
-                    logger.error(f"[DEBUG] Client error {resp.status_code}, not retrying")
+                    slog.debug("Client error, not retrying", status_code=resp.status_code)
                     return resp.status_code, str(http_err)
 
                 # Retry on 5xx server errors and 429 rate limit
@@ -282,26 +316,30 @@ class LLMAdapter:
                     return resp.status_code, str(http_err)
 
             except requests.exceptions.ConnectionError as conn_err:
-                logger.error(f"[DEBUG] LLM API Connection Error (attempt {attempt + 1}): {conn_err}")
+                slog.error("LLM API connection error", attempt=f"{attempt + 1}/{max_retries}", error=str(conn_err))
                 if attempt == max_retries - 1:
-                    logger.error(f"[DEBUG] All {max_retries} attempts failed - LLM API not reachable")
+                    slog.error("All attempts failed - LLM API not reachable", max_retries=max_retries)
                     return None, f"Connection failed after {max_retries} attempts: {str(conn_err)}"
 
             except requests.exceptions.Timeout as timeout_err:
-                logger.error(f"[DEBUG] LLM API Timeout (attempt {attempt + 1}): {timeout_err}")
+                slog.error("LLM API timeout", attempt=f"{attempt + 1}/{max_retries}", error=str(timeout_err))
                 if attempt == max_retries - 1:
-                    logger.error(f"[DEBUG] All {max_retries} attempts timed out")
+                    slog.error("All attempts timed out", max_retries=max_retries)
                     return None, f"Timeout after {max_retries} attempts: {str(timeout_err)}"
 
             except requests.exceptions.RequestException as req_err:
-                logger.error(f"[DEBUG] LLM API Request Error (attempt {attempt + 1}): {req_err}")
-                logger.error(f"[DEBUG] Error type: {type(req_err).__name__}")
+                slog.error("LLM API request error",
+                           attempt=f"{attempt + 1}/{max_retries}",
+                           error=str(req_err),
+                           error_type=type(req_err).__name__)
                 if attempt == max_retries - 1:
                     return None, str(req_err)
 
             except Exception as err:
-                logger.error(f"[DEBUG] LLM API Unexpected Error (attempt {attempt + 1}): {err}")
-                logger.error(f"[DEBUG] Error type: {type(err).__name__}")
+                slog.error("LLM API unexpected error",
+                           attempt=f"{attempt + 1}/{max_retries}",
+                           error=str(err),
+                           error_type=type(err).__name__)
                 if attempt == max_retries - 1:
                     return None, str(err)
 

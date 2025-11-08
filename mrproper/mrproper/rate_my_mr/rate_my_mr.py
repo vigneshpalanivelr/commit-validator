@@ -5,6 +5,7 @@ import re
 import json
 import os
 import time
+import logging
 from .loc import LOCCalculator
 from .params import RMMConstants, RMMWeights, RMMLimits, get_all_applicable_checks
 from .cyclomatic_complexity import CyclomaticComplexityCalculator
@@ -17,6 +18,37 @@ try:
     HAS_LLM_ADAPTER = True
 except ImportError:
     HAS_LLM_ADAPTER = False
+
+# Get logger (will use the logger set up by rate_my_mr_gitlab.py)
+logger = logging.getLogger(__name__)
+
+# Helper for structured logging
+class StructuredLog:
+    """Lightweight structured logging helper that uses module logger."""
+    @staticmethod
+    def _fmt(msg, **kwargs):
+        if kwargs:
+            fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
+            return f'{msg} | {fields}'
+        return msg
+
+    @staticmethod
+    def debug(msg, **kwargs):
+        logger.debug(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def info(msg, **kwargs):
+        logger.info(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def warning(msg, **kwargs):
+        logger.warning(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def error(msg, **kwargs):
+        logger.error(StructuredLog._fmt(msg, **kwargs))
+
+slog = StructuredLog
 
 
 def print_banner(title):
@@ -43,42 +75,44 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
     use_adapter = HAS_LLM_ADAPTER and os.environ.get('BFA_HOST')
 
     if use_adapter:
-        print(f"[DEBUG] Using new LLM adapter (BFA_HOST is configured)")
+        slog.debug("Using new LLM adapter", bfa_host_configured=True)
         return llm_adapter.send_request(payload, url, max_retries)
 
     # Legacy direct connection (original implementation)
-    print(f"[DEBUG] Using legacy direct AI service connection")
-    print(f"[DEBUG] AI Service Request - URL: {url}")
-    print(f"[DEBUG] AI Service Request - Payload size: {len(str(payload))} chars")
-    print(f"[DEBUG] AI Service Request - Timeout: 120 seconds, Max retries: {max_retries}")
+    slog.debug("Using legacy direct AI service connection",
+               url=url,
+               payload_size=len(str(payload)),
+               timeout=120,
+               max_retries=max_retries)
 
     for attempt in range(max_retries):
         try:
             if attempt > 0:
                 # Exponential backoff: 2s, 4s, 8s
                 wait_time = 2 ** attempt
-                print(f"[DEBUG] Retry attempt {attempt + 1}/{max_retries} after {wait_time}s wait...")
+                slog.debug("Retry attempt", attempt=f"{attempt + 1}/{max_retries}", wait_time_s=wait_time)
                 time.sleep(wait_time)
 
-            print(f"[DEBUG] Sending POST request to AI service (attempt {attempt + 1}/{max_retries})...")
+            slog.debug("Sending POST request to AI service", attempt=f"{attempt + 1}/{max_retries}")
             resp = requests.post(url, json=payload, timeout=120)
-            print(f"[DEBUG] AI Service Response - Status Code: {resp.status_code}")
-            print(f"[DEBUG] AI Service Response - Content Length: {len(resp.content)}")
+            slog.debug("AI Service response", status_code=resp.status_code, content_length=len(resp.content))
 
             # Raise an error for bad responses (4xx and 5xx)
             resp.raise_for_status()
 
             response_json = resp.json()
-            print(f"[DEBUG] AI Service Response - JSON parsed successfully")
+            slog.debug("AI Service JSON parsed successfully")
             return resp.status_code, response_json
 
         except requests.exceptions.HTTPError as http_err:
-            print(f"[DEBUG] AI Service HTTP Error (attempt {attempt + 1}): {http_err}")
-            print(f"[DEBUG] Response content: {resp.content[:500] if 'resp' in locals() else 'No response'}")
+            slog.error("AI Service HTTP error",
+                       attempt=f"{attempt + 1}/{max_retries}",
+                       status_code=resp.status_code,
+                       error=str(http_err))
 
             # Don't retry on 4xx client errors (except 429 rate limit)
             if 400 <= resp.status_code < 500 and resp.status_code != 429:
-                print(f"[DEBUG] Client error {resp.status_code}, not retrying")
+                slog.debug("Client error, not retrying", status_code=resp.status_code)
                 return resp.status_code, str(http_err)
 
             # Retry on 5xx server errors and 429 rate limit
@@ -86,26 +120,30 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
                 return resp.status_code, str(http_err)
 
         except requests.exceptions.ConnectionError as conn_err:
-            print(f"[DEBUG] AI Service Connection Error (attempt {attempt + 1}): {conn_err}")
+            slog.error("AI Service connection error", attempt=f"{attempt + 1}/{max_retries}", error=str(conn_err))
             if attempt == max_retries - 1:
-                print(f"[DEBUG] All {max_retries} attempts failed - AI service not reachable")
+                slog.error("All attempts failed - AI service not reachable", max_retries=max_retries)
                 return None, f"Connection failed after {max_retries} attempts: {str(conn_err)}"
 
         except requests.exceptions.Timeout as timeout_err:
-            print(f"[DEBUG] AI Service Timeout (attempt {attempt + 1}): {timeout_err}")
+            slog.error("AI Service timeout", attempt=f"{attempt + 1}/{max_retries}", error=str(timeout_err))
             if attempt == max_retries - 1:
-                print(f"[DEBUG] All {max_retries} attempts timed out")
+                slog.error("All attempts timed out", max_retries=max_retries)
                 return None, f"Timeout after {max_retries} attempts: {str(timeout_err)}"
 
         except requests.exceptions.RequestException as req_err:
-            print(f"[DEBUG] AI Service Request Error (attempt {attempt + 1}): {req_err}")
-            print(f"[DEBUG] Error type: {type(req_err).__name__}")
+            slog.error("AI Service request error",
+                       attempt=f"{attempt + 1}/{max_retries}",
+                       error=str(req_err),
+                       error_type=type(req_err).__name__)
             if attempt == max_retries - 1:
                 return None, str(req_err)
 
         except Exception as err:
-            print(f"[DEBUG] AI Service Unexpected Error (attempt {attempt + 1}): {err}")
-            print(f"[DEBUG] Error type: {type(err).__name__}")
+            slog.error("AI Service unexpected error",
+                       attempt=f"{attempt + 1}/{max_retries}",
+                       error=str(err),
+                       error_type=type(err).__name__)
             if attempt == max_retries - 1:
                 return None, str(err)
 
