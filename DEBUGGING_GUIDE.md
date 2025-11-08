@@ -405,6 +405,98 @@ SUCCESS=$((TOTAL - ERRORS))
 echo "Success rate: ${SUCCESS}/${TOTAL} ($((SUCCESS * 100 / TOTAL))%)"
 ```
 
+###  Scenario 6: LLM Adapter (JWT Token) Issues
+
+**Symptom**: Validation fails with token-related errors when `BFA_HOST` is configured
+
+**Common Errors**:
+- "Failed to get JWT token"
+- "JWT token authentication failed (401 Unauthorized)"
+- "Connection failed to token endpoint"
+- "Token API response status: 401/403/500"
+
+#### Step 1: Verify BFA Configuration
+
+```bash
+# Check if BFA_HOST is configured
+docker exec <container-name> env | grep BFA
+
+# Expected output:
+# BFA_HOST=api-gateway.internal.com
+# API_TIMEOUT=120
+# BFA_TOKEN_KEY=<token> (optional)
+```
+
+#### Step 2: Check Token Acquisition Logs
+
+```bash
+# Find validator log
+ls -t /home/docker/tmp/mr-validator-logs/rate-my-mr-*.log | head -1
+
+# Check token acquisition
+grep "JWT token" /home/docker/tmp/mr-validator-logs/rate-my-mr-<request-id>.log
+
+# Expected for normal flow:
+# [DEBUG] Requesting JWT token from http://api-gateway.internal.com:8000/api/token
+# [DEBUG] Token subject: rate-my-mr-<project>-<mriid>
+# [DEBUG] Token API response status: 200
+# [DEBUG] JWT token acquired successfully for <project>-<mriid>
+# [DEBUG] Token (first 20 chars): eyJhbGciOiJIUzI1Ni...
+```
+
+#### Step 3: Check Token Reuse
+
+```bash
+# Count token acquisitions (should be 1 per MR)
+grep -c "Requesting JWT token" /home/docker/tmp/mr-validator-logs/rate-my-mr-<request-id>.log
+
+# Count token reuse (should be 3 for 4 AI calls)
+grep -c "Reusing existing session token" /home/docker/tmp/mr-validator-logs/rate-my-mr-<request-id>.log
+```
+
+#### Step 4: Check for Authentication Failures
+
+```bash
+# Search for 401 errors
+grep "401\|Unauthorized\|authentication failed" /home/docker/tmp/mr-validator-logs/rate-my-mr-*.log
+
+# If 401 found:
+# [ERROR] LLM API HTTP Error (attempt 1): 401 Client Error: Unauthorized
+# [ERROR] JWT token authentication failed (401 Unauthorized)
+# → Token invalid or expired
+```
+
+#### Common Causes & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| "Failed to get JWT token" | BFA_HOST unreachable | Check network, verify BFA_HOST value |
+| "Token API response status: 401" | Invalid credentials | Check PROJECT_ID and MR_IID are set |
+| "401 Unauthorized" on LLM calls | Expired/invalid token | Token cache cleared automatically, check if BFA_TOKEN_KEY is valid |
+| "Connection refused" | BFA service down | Verify BFA service is running |
+| Token not reused | Bug | Check logs for "Reusing existing session token" |
+
+#### Manual Token Test
+
+```bash
+# Test token endpoint manually
+curl -X POST "http://api-gateway.internal.com:8000/api/token" \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"rate-my-mr-test-project-123"}' \
+  -v
+
+# Expected response:
+# HTTP/1.1 200 OK
+# Content-Type: application/json
+# {"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}
+```
+
+#### See Also
+
+- **Complete LLM Adapter Guide**: [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md)
+- **Configuration**: [README.md LLM Adapter Configuration](./README.md#llm-adapter-configuration-new)
+- **Testing Procedures**: [COMPREHENSIVE_TEST_PLAN.md Test Suite 4](./COMPREHENSIVE_TEST_PLAN.md#test-suite-4-rate-my-mr-validator-tests-new-llm-adapter)
+
 ---
 
 ## Error Pattern Analysis

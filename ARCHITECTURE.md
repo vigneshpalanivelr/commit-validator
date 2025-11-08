@@ -33,6 +33,26 @@
     - [Scalability Metrics](#scalability-metrics)
     - [Logging Architecture](#logging-architecture)
 
+## Quick Navigation
+
+**Choose your path based on your role**:
+
+- **🚀 New User?** Start with [README.md Quick Start](./README.md#quick-start) first
+- **🔧 Operator/DevOps?** Focus on [Deployment](#deployment) and [System Operations](#system-operations-by-phase) sections below
+- **👨‍💻 Developer?** Read [Component Architecture](#component-architecture) and [Technology Stack](#technology-stack)
+- **🐛 Troubleshooting?** See [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md) for REQUEST_ID-based debugging
+- **🔌 LLM Adapter Setup?** See [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md)
+- **🧪 Testing?** See [COMPREHENSIVE_TEST_PLAN.md](./COMPREHENSIVE_TEST_PLAN.md)
+
+**Related Documents**:
+- Configuration: [README.md Configuration](./README.md#configuration)
+- Debugging: [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md)
+- LLM Adapter: [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md)
+- Testing: [COMPREHENSIVE_TEST_PLAN.md](./COMPREHENSIVE_TEST_PLAN.md)
+- Documentation Roadmap: [DOCUMENTATION.md](./DOCUMENTATION.md)
+
+---
+
 ## System Overview
 
 The MR Validator is an automated GitLab merge request validation system consisting of two main components working in tandem to provide comprehensive code quality assessment.
@@ -41,6 +61,41 @@ The MR Validator is an automated GitLab merge request validation system consisti
 2. **Webhook Server** receives events and validates request parameters
 3. **Docker Containers** execute validation logic in isolated environments
 4. **MRProper Library** performs actual validation and updates GitLab discussions
+
+### LLM Integration Routing
+
+The system supports two modes for AI service integration with automatic routing:
+
+```
+Webhook → rate-my-mr validator
+              ↓
+    Check: BFA_HOST configured?
+              ↓
+         ┌────┴────┐
+        YES        NO
+         ↓          ↓
+    LLM Adapter   Legacy Direct
+         ↓          ↓
+    BFA Service   10.31.88.29:6006
+    (JWT auth)    (no auth)
+         ↓          ↓
+        LLM        LLM
+```
+
+**Routing Logic**:
+- `BFA_HOST` environment variable set → New LLM adapter with JWT authentication
+- `BFA_HOST` not set → Legacy direct connection to AI service
+
+**LLM Adapter Features**:
+- JWT token authentication via `POST http://{BFA_HOST}:8000/api/token`
+- Token acquired once per MR validation, reused for all 4 AI calls
+- Exponential backoff retry logic (2s, 4s, 8s)
+- Support for pre-configured tokens via `BFA_TOKEN_KEY`
+- Configurable timeout via `API_TIMEOUT`
+
+**See**: [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md) for complete details
+
+---
 
 ## Deployment
 ### GitLab Deployment Diagram

@@ -210,187 +210,60 @@ def _transform_response(self, response_data):
 
 ---
 
-## Testing Guide
+## Testing
 
-### Test 1: Verify Legacy Mode Still Works
+For comprehensive testing procedures, see **[COMPREHENSIVE_TEST_PLAN.md Test Suites 4 & 5](./COMPREHENSIVE_TEST_PLAN.md#test-suite-4-rate-my-mr-validator-tests-new-llm-adapter)**.
 
-**Goal**: Ensure backward compatibility
+### Test Coverage
 
-**Steps**:
+The comprehensive test plan includes:
+
+**Test Suite 4: rate-my-mr Validator Tests (New LLM Adapter)**
+- ✅ Test 4.1: JWT Token Acquisition
+- ✅ Test 4.2: Token Reuse Across Multiple AI Calls
+- ✅ Test 4.3: Pre-configured Token (BFA_TOKEN_KEY)
+- ✅ Test 4.4: Token Expiration / 401 Handling
+- ✅ Test 4.5: LLM Adapter Retry Logic
+- ✅ Test 4.6: Backward Compatibility (No BFA_HOST)
+
+**Test Suite 5: Integration Tests**
+- ✅ Multiple Validators in Parallel
+- ✅ Concurrent MR Validations
+- ✅ End-to-End GitLab Webhook Flow
+
+### Quick Manual Test
+
+If you need a quick sanity test:
+
 ```bash
-# 1. Configure for legacy mode (no BFA_HOST)
+# 1. Configure new adapter mode
 cat > mrproper.env <<EOF
-GITLAB_ACCESS_TOKEN=glpat-your-token-here
-AI_SERVICE_URL=http://10.31.88.29:6006/generate
+GITLAB_ACCESS_TOKEN=glpat-your-token
+BFA_HOST=api-gateway.internal.com
+API_TIMEOUT=120
 EOF
 
-# 2. Trigger a test MR validation
-# (Create a test MR in GitLab and trigger webhook)
+# 2. Run validation
+docker run --env-file mrproper.env \
+  --env REQUEST_ID=test_$(date +%Y%m%d_%H%M%S_%N) \
+  mr-checker-vp-test rate-my-mr \
+  test-project 123
 
 # 3. Check logs
-tail -f /home/docker/tmp/mr-validator-logs/rate-my-mr-*.log
+tail -100 /home/docker/tmp/mr-validator-logs/rate-my-mr-*.log | grep -E "JWT token|LLM.*adapter"
 
-# Expected: Should see "Using legacy direct AI service connection"
+# Expected:
+# [DEBUG] Using new LLM adapter (BFA_HOST is configured)
+# [DEBUG] Requesting JWT token from http://api-gateway.internal.com:8000/api/token
+# [DEBUG] JWT token acquired successfully
+# [DEBUG] Reusing existing session token (for calls 2,3,4)
 ```
 
-**Expected Result**: ✅ Validation works exactly as before
+### See Also
 
-### Test 2: Verify New Adapter with Token API
-
-**Goal**: Test JWT token acquisition and LLM calls
-
-**Steps**:
-```bash
-# 1. Configure for new adapter mode
-cat > mrproper.env <<EOF
-GITLAB_ACCESS_TOKEN=glpat-your-token-here
-BFA_HOST=your-bfa-hostname-here
-API_TIMEOUT=120
-EOF
-
-# 2. Start webhook server
-./start-server
-
-# 3. Trigger test MR validation
-
-# 4. Monitor validator logs
-tail -f /home/docker/tmp/mr-validator-logs/rate-my-mr-*.log
-```
-
-**Expected Behavior**:
-```
-[DEBUG] Using new LLM adapter (BFA_HOST is configured)
-[DEBUG] LLM Adapter initialized - BFA_HOST: xxx, Timeout: 120s
-[DEBUG] Requesting JWT token from http://xxx:8000/api/token
-[DEBUG] Token subject: rate-my-mr-<project>-<mriid>
-[DEBUG] Token API response status: 200
-[DEBUG] JWT token acquired successfully for <project>-<mriid>
-[DEBUG] Token (first 20 chars): eyJhbGciOiJIUzI1Ni...
-[DEBUG] Sending POST request to LLM API (attempt 1/3)...
-[DEBUG] LLM API Response - Status Code: 200
-[DEBUG] LLM API Response - JSON parsed successfully
-
-# For subsequent calls (2nd, 3rd, 4th):
-[DEBUG] Reusing existing session token for <project>-<mriid>
-```
-
-**Expected Result**:
-- ✅ Token acquired once
-- ✅ Token reused for all 4 calls
-- ✅ All AI functions return successfully
-- ✅ GitLab discussion posted
-
-### Test 3: Verify Token Reuse
-
-**Goal**: Confirm token is obtained once and reused
-
-**Steps**:
-```bash
-# Monitor logs for a single MR validation
-grep "JWT token" /home/docker/tmp/mr-validator-logs/rate-my-mr-<request-id>.log
-
-# Should see:
-# - "JWT token acquired" → 1 time
-# - "Reusing existing session token" → 3 times (for calls 2, 3, 4)
-```
-
-**Expected Result**: ✅ Only 1 token API call per MR validation
-
-### Test 4: Verify Pre-configured Token
-
-**Goal**: Test BFA_TOKEN_KEY bypasses token API
-
-**Steps**:
-```bash
-# 1. Get a token manually
-curl -X POST "http://${BFA_HOST}:8000/api/token" \
-  -H "Content-Type: application/json" \
-  -d '{"subject":"rate-my-mr-test-123"}'
-
-# Response: {"token": "eyJ..."}
-
-# 2. Configure with pre-set token
-cat > mrproper.env <<EOF
-GITLAB_ACCESS_TOKEN=glpat-your-token-here
-BFA_HOST=your-bfa-hostname-here
-BFA_TOKEN_KEY=eyJhbGciOiJIUzI1Ni...
-API_TIMEOUT=120
-EOF
-
-# 3. Trigger validation and check logs
-tail -f /home/docker/tmp/mr-validator-logs/rate-my-mr-*.log
-```
-
-**Expected Behavior**:
-```
-[DEBUG] Using new LLM adapter (BFA_HOST is configured)
-[DEBUG] Using pre-configured BFA_TOKEN_KEY
-[DEBUG] Sending POST request to LLM API (attempt 1/3)...
-# Should NOT see "Requesting JWT token from..."
-```
-
-**Expected Result**: ✅ No token API calls, uses pre-configured token
-
-### Test 5: Verify Error Handling
-
-**Goal**: Test authentication failure recovery
-
-**Steps**:
-```bash
-# 1. Configure with invalid BFA_HOST (to trigger connection error)
-cat > mrproper.env <<EOF
-GITLAB_ACCESS_TOKEN=glpat-your-token-here
-BFA_HOST=invalid-hostname-that-does-not-exist
-API_TIMEOUT=120
-EOF
-
-# 2. Trigger validation and observe error handling
-tail -f /home/docker/tmp/mr-validator-logs/rate-my-mr-*.log
-```
-
-**Expected Behavior**:
-```
-[DEBUG] Requesting JWT token from http://invalid-hostname:8000/api/token
-[DEBUG] LLM API Connection Error (attempt 1): [Errno -2] Name or service not known
-[DEBUG] Retry attempt 2/3 after 2s wait...
-[DEBUG] LLM API Connection Error (attempt 2): [Errno -2] Name or service not known
-[DEBUG] Retry attempt 3/3 after 4s wait...
-[DEBUG] All 3 attempts failed - LLM API not reachable
-[ERROR] Failed to get JWT token: Connection failed after 3 attempts
-```
-
-**Expected Result**: ✅ Graceful error handling with retries
-
-### Test 6: Verify 401 Token Expiration Handling
-
-**Goal**: Test token refresh on expiration
-
-**Prerequisites**: Need expired token or API that returns 401
-
-**Steps**:
-```bash
-# 1. Use expired or invalid token
-cat > mrproper.env <<EOF
-GITLAB_ACCESS_TOKEN=glpat-your-token-here
-BFA_HOST=your-bfa-hostname
-BFA_TOKEN_KEY=expired_or_invalid_token_here
-EOF
-
-# 2. Trigger validation
-# 3. Check logs
-```
-
-**Expected Behavior**:
-```
-[DEBUG] Using pre-configured BFA_TOKEN_KEY
-[DEBUG] Sending POST request to LLM API...
-[ERROR] LLM API HTTP Error (attempt 1): 401 Client Error: Unauthorized
-[ERROR] JWT token authentication failed (401 Unauthorized)
-# Token cache should be cleared
-[DEBUG] Client error 401, not retrying
-```
-
-**Expected Result**: ✅ Token cache cleared on 401 error
+- **Full Test Procedures**: [COMPREHENSIVE_TEST_PLAN.md](./COMPREHENSIVE_TEST_PLAN.md)
+- **Debugging**: [DEBUGGING_GUIDE.md Scenario 6](./DEBUGGING_GUIDE.md#scenario-6-llm-adapter-jwt-token-issues)
+- **Configuration**: [README.md LLM Adapter Configuration](./README.md#llm-adapter-configuration-new)
 
 ---
 
