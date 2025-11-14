@@ -36,6 +36,7 @@ import os
 import requests
 import time
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +174,9 @@ class LLMAdapter:
 
     def _transform_request(self, payload):
         """
-        Transform request from current format to new API format.
+        Transform request from current format to new BFA API format.
 
-        Current format (assumed):
+        Current format:
         {
             "messages": [
                 {"role": "system", "content": "..."},
@@ -183,44 +184,111 @@ class LLMAdapter:
             ]
         }
 
-        TODO: Update this method when actual new API format is provided.
-        For now, keeping the same format as input.
+        New BFA API format:
+        {
+            "repo": "my-org/my-project",
+            "branch": "feature/new-parser",
+            "author": "vishal@internal.com",
+            "commit": "abc123def456",
+            "mr_url": "https://git.internal.com/my-org/my-project/merge_requests/42",
+            "prompt": "{\"messages\": [...]}"  # JSON string, not object
+        }
 
         Args:
-            payload: Original request payload
+            payload: Original request payload dict
 
         Returns:
-            dict: Transformed payload for new API
+            dict: Transformed payload for new BFA API
         """
-        # TODO: Implement actual transformation based on new API specification
-        # For now, pass through as-is
-        slog.debug("Request transformation", status="passthrough", payload_size=len(str(payload)))
-        return payload
+        # Extract metadata from environment (set by rate_my_mr_gitlab.py)
+        repo = os.environ.get('MR_REPO', 'unknown')
+        branch = os.environ.get('MR_BRANCH', 'unknown')
+        author = os.environ.get('MR_AUTHOR', 'unknown@example.com')
+        commit = os.environ.get('MR_COMMIT', 'unknown')
+        mr_url = os.environ.get('MR_URL', 'unknown')
+
+        # Convert payload dict to JSON string (BFA API expects prompt as JSON string)
+        prompt_json_string = json.dumps(payload)
+
+        # Construct new BFA API format
+        new_payload = {
+            "repo": repo,
+            "branch": branch,
+            "author": author,
+            "commit": commit,
+            "mr_url": mr_url,
+            "prompt": prompt_json_string  # JSON string, not dict
+        }
+
+        slog.debug("Request transformed to BFA format",
+                   repo=repo,
+                   branch=branch,
+                   commit=commit[:8] if commit != 'unknown' else 'unknown',
+                   prompt_length=len(prompt_json_string))
+
+        return new_payload
 
     def _transform_response(self, response_data):
         """
-        Transform response from new API format to expected format.
+        Transform response from BFA API format to expected format.
 
-        Expected format (for compatibility):
+        BFA API response format:
+        {
+            "status": "ok",
+            "repo": "my-org/my-project",
+            "branch": "feature/new-parser",
+            "commit": "abc123",
+            "author": "vishal@internal.com",
+            "metrics": {
+                "summary_text": "AI generated response text..."
+            },
+            "sent_to": "user not found in slack directory!"
+        }
+
+        Expected format (for backward compatibility with rate_my_mr.py):
         {
             "content": [
-                {"type": "text", "text": "..."}
+                {"type": "text", "text": "AI generated response text..."}
             ]
         }
 
-        TODO: Update this method when actual new API response format is provided.
-        For now, assuming same format as output.
-
         Args:
-            response_data: Raw response from new API
+            response_data: Raw response from BFA API
 
         Returns:
             dict: Transformed response in expected format
         """
-        # TODO: Implement actual transformation based on new API specification
-        # For now, pass through as-is
-        slog.debug("Response transformation", status="passthrough")
-        return response_data
+        # Check response status
+        status = response_data.get('status', 'unknown')
+        if status != 'ok':
+            slog.warning("BFA API returned non-ok status", status=status)
+
+        # Extract the AI response text from metrics.summary_text
+        metrics = response_data.get('metrics', {})
+        summary_text = metrics.get('summary_text', '')
+
+        if not summary_text:
+            slog.error("No summary_text in BFA response",
+                       metrics_keys=list(metrics.keys()),
+                       status=status)
+            # Return error message to avoid breaking the pipeline
+            summary_text = "Error: No AI response received from BFA service"
+
+        # Transform to expected format (compatible with rate_my_mr.py parsing)
+        transformed = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": summary_text
+                }
+            ]
+        }
+
+        slog.debug("Response transformed from BFA format",
+                   text_length=len(summary_text),
+                   status=status)
+
+        return transformed
 
     def send_request(self, payload, url=None, max_retries=None):
         """

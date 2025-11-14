@@ -178,35 +178,76 @@ Total: 1 token API call + 4 LLM API calls
 
 ---
 
-## What's Pending (TODO)
+## ✅ Request/Response Format Transformation (COMPLETE)
 
-### ⚠️ Request/Response Format Transformation
+### **Status**: Implementation Complete (2025-11-14)
 
-**Status**: Currently assumes same format as legacy API
+### **Request Transformation**
 
-**Current Implementation**:
+**Old Format** (from rate_my_mr.py):
 ```python
-def _transform_request(self, payload):
-    # TODO: Implement actual transformation
-    return payload  # Pass-through for now
-
-def _transform_response(self, response_data):
-    # TODO: Implement actual transformation
-    return response_data  # Pass-through for now
+{
+    "messages": [
+        {"role": "system", "content": "You are a code reviewer..."},
+        {"role": "user", "content": "diff content..."}
+    ]
+}
 ```
 
-**Waiting For**:
-1. Actual request format expected by `POST http://{BFA_HOST}:8000/api/rate-my-mr`
-2. Actual response format returned by the API
-3. Error response format
+**New BFA API Format**:
+```python
+{
+    "repo": "my-org/my-project",
+    "branch": "feature/new-parser",
+    "author": "vishal@internal.com",
+    "commit": "abc123def456",
+    "mr_url": "https://git.internal.com/my-org/my-project/merge_requests/42",
+    "prompt": "{\"messages\": [{\"role\": \"system\", \"content\": \"...\"}, {\"role\": \"user\", \"content\": \"...\"}]}"
+}
+```
 
-**Current Format Assumption**:
-- **Request**: `{"messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]}`
-- **Response**: `{"content": [{"type": "text", "text": "..."}]}`
+**Key Points**:
+- ✅ Metadata (repo, branch, author, commit, mr_url) extracted from GitLab API in `rate_my_mr_gitlab.py`
+- ✅ Metadata stored in environment variables (MR_REPO, MR_BRANCH, MR_AUTHOR, MR_COMMIT, MR_URL)
+- ✅ `_transform_request()` reads env vars and constructs new format
+- ✅ Original payload converted to JSON string via `json.dumps()` and stored in "prompt" field
 
-**When Format is Provided**:
-- Update `_transform_request()` method in `llm_adapter.py` (lines 159-173)
-- Update `_transform_response()` method in `llm_adapter.py` (lines 175-189)
+### **Response Transformation**
+
+**BFA API Response**:
+```python
+{
+    "status": "ok",
+    "repo": "my-org/my-project",
+    "branch": "feature/new-parser",
+    "commit": "abc123",
+    "author": "vishal@internal.com",
+    "metrics": {
+        "summary_text": "AI generated analysis..."
+    },
+    "sent_to": "user not found in slack directory!"
+}
+```
+
+**Transformed Response** (backward compatible):
+```python
+{
+    "content": [
+        {"type": "text", "text": "AI generated analysis..."}
+    ]
+}
+```
+
+**Key Points**:
+- ✅ `_transform_response()` extracts `metrics.summary_text` from BFA response
+- ✅ Wraps in expected format for backward compatibility with `rate_my_mr.py`
+- ✅ Error handling: returns error message if summary_text is missing
+
+### **Implementation Details**
+
+**Files Modified**:
+- `llm_adapter.py` (lines 175-291): Transformation methods implemented
+- `rate_my_mr_gitlab.py` (lines 271-307): MR metadata extraction added
 
 ---
 

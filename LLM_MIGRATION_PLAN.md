@@ -36,33 +36,36 @@
 
 ### Pending Items
 
-⏳ **Request/Response Format Transformation** - AWAITING API SPECIFICATIONS
-- `_transform_request()` method currently passes through (assumes same format)
-- `_transform_response()` method currently passes through (assumes same format)
-- Need actual API format from BFA team to implement transformations
-
-⏳ **Error Response Format Handling** - AWAITING API SPECIFICATIONS
-- Need examples of error responses from new API
-- Need specific error codes and formats
+✅ **Request/Response Format Transformation** - COMPLETE (2025-11-14)
+- `_transform_request()` method implemented with BFA API format
+- Transforms old format to new: adds repo, branch, author, commit, mr_url fields
+- Wraps original payload in "prompt" field as JSON string
+- `_transform_response()` method implemented
+- Extracts metrics.summary_text from BFA response
+- Transforms to backward-compatible format for rate_my_mr.py
 
 ⏳ **Production Testing** - AWAITING BFA SERVICE AVAILABILITY
 - Cannot test until BFA service endpoint is available
 - Need to verify token acquisition
-- Need to verify all 4 AI calls work
+- Need to verify all 4 AI calls work with new format
 - Need to test error scenarios
+
+✅ **MR Metadata Extraction** - COMPLETE (2025-11-14)
+- rate_my_mr_gitlab.py now extracts: repo, branch, author, commit, mr_url
+- Sets environment variables for llm_adapter.py to use
+- Handles fallbacks for missing GitLab API fields
 
 ### What's Needed to Complete
 
-1. **API Specifications** (from BFA team):
-   - Request format for `POST /api/rate-my-mr`
-   - Response format from the API
-   - Error response formats and codes
-   - Any additional headers or parameters
-
-2. **Testing Environment**:
-   - BFA_HOST value for testing
+1. **Testing Environment**:
+   - BFA_HOST value for testing/production
    - Test endpoint availability
-   - Sample tokens or credentials
+   - Verify BFA service is running and accessible
+
+2. **Configuration**:
+   - Set BFA_HOST in mrproper.env (e.g., `BFA_HOST=api-gateway.internal.com`)
+   - Optionally set BFA_TOKEN_KEY if using pre-configured token
+   - Test MR validation with BFA service
 
 ### Implementation Location
 

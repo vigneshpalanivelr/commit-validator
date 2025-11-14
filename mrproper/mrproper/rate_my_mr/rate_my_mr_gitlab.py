@@ -268,6 +268,44 @@ def handle_mr(proj, mriid):
         for i, commit in enumerate(mrcommits):
             slog.debug(f"Commit {i+1}", commit_id=commit.id[:8], title=commit.title)
 
+        # Extract MR metadata for LLM adapter (new BFA API integration)
+        # These environment variables are used by llm_adapter.py to construct the request
+        slog.debug("Extracting MR metadata for LLM adapter")
+
+        # Decode project name from URL encoding (e.g., "my-org%2Fmy-project" → "my-org/my-project")
+        MR_REPO = urllib.parse.unquote(proj)
+
+        # Extract branch name
+        MR_BRANCH = mr.source_branch
+
+        # Extract author email (with fallback if not available)
+        mr_author = getattr(mr, 'author', None)
+        if mr_author:
+            # Try to get email from author object
+            MR_AUTHOR = getattr(mr_author, 'email', None) or getattr(mr_author, 'username', 'unknown') + '@internal.com'
+        else:
+            MR_AUTHOR = 'unknown@internal.com'
+
+        # Extract latest commit SHA
+        MR_COMMIT = mrcommits[-1].id if mrcommits else 'unknown'
+
+        # Construct MR URL (use web_url if available, otherwise construct it)
+        MR_URL = getattr(mr, 'web_url', None) or f"https://{gitlab.GITLAB_HOST}/{MR_REPO}/merge_requests/{mriid}"
+
+        # Set environment variables for LLM adapter
+        os.environ['MR_REPO'] = MR_REPO
+        os.environ['MR_BRANCH'] = MR_BRANCH
+        os.environ['MR_AUTHOR'] = MR_AUTHOR
+        os.environ['MR_COMMIT'] = MR_COMMIT
+        os.environ['MR_URL'] = MR_URL
+
+        slog.info("MR metadata extracted for LLM adapter",
+                  repo=MR_REPO,
+                  branch=MR_BRANCH,
+                  author=MR_AUTHOR,
+                  commit=MR_COMMIT[:8] if MR_COMMIT != 'unknown' else 'unknown',
+                  mr_url=MR_URL)
+
     except Exception as api_error:
         slog.error("GitLab API error", error=str(api_error), error_type=type(api_error).__name__)
         raise
