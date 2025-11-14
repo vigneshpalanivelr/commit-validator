@@ -296,6 +296,444 @@ stateDiagram-v2
     Failed --> [*]: Exit 1
 ```
 
+### Complete Workflow Verification
+
+This section provides an end-to-end verification of the MR validation workflow, showing exactly how the system processes GitLab webhooks, performs analysis, and updates MR comments.
+
+#### Scenario 1: New MR Created
+
+**Complete flow from GitLab webhook to MR comment creation:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ 1. GitLab Event: User creates MR #42                                │
+│    Project: my-org/my-project                                       │
+│    Branch: feature/new-parser → main                                │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 2. GitLab Webhook: POST to webhook-server:9912/mr-proper/rate-my-mr │
+│    Payload: {                                                        │
+│      "project": {"path_with_namespace": "my-org/my-project"},       │
+│      "object_attributes": {"iid": 42, "source_branch": "..."},      │
+│      "user": {"email": "vishal@internal.com"}                       │
+│    }                                                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 3. webhook-server/server.py                                         │
+│    - Generate REQUEST_ID: 20251114_143022_87654321                  │
+│    - Spawn Docker container:                                        │
+│      docker run -d --rm \                                           │
+│        --env-file mrproper.env \                                    │
+│        --env REQUEST_ID=20251114_143022_87654321 \                  │
+│        --env PROJECT_ID=my-org%2Fmy-project \                       │
+│        --env MR_IID=42 \                                            │
+│        --env BFA_HOST=api-gateway.internal.com \                    │
+│        -v /logs:/logs \                                             │
+│        mr-checker-vp-test rate-my-mr \                              │
+│        my-org%2Fmy-project 42                                       │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 4. rate_my_mr_gitlab.py: handle_mr()                                │
+│                                                                      │
+│    Step 4a: Fetch MR data from GitLab API                           │
+│    GET https://git.internal.com/api/v4/projects/                    │
+│        my-org%2Fmy-project/merge_requests/42                        │
+│    Response: {                                                       │
+│      "iid": 42,                                                      │
+│      "title": "Add new parser functionality",                       │
+│      "source_branch": "feature/new-parser",                         │
+│      "target_branch": "main",                                       │
+│      "author": {"email": "vishal@internal.com"},                    │
+│      "web_url": "https://git.internal.com/.../merge_requests/42"    │
+│    }                                                                 │
+│                                                                      │
+│    Step 4b: Fetch MR commits                                        │
+│    GET /api/v4/projects/.../merge_requests/42/commits               │
+│    Response: [                                                       │
+│      {"id": "abc123def456...", "title": "Add parser class"},        │
+│      {"id": "789xyz...", "title": "Add tests"}                      │
+│    ]                                                                 │
+│                                                                      │
+│    Step 4c: Extract MR metadata (lines 271-307)                     │
+│      MR_REPO = "my-org/my-project"  (URL decoded)                   │
+│      MR_BRANCH = "feature/new-parser"                               │
+│      MR_AUTHOR = "vishal@internal.com"                              │
+│      MR_COMMIT = "789xyz..." (latest commit)                        │
+│      MR_URL = "https://git.internal.com/.../merge_requests/42"      │
+│                                                                      │
+│    Step 4d: Set environment variables                               │
+│      os.environ['MR_REPO'] = "my-org/my-project"                    │
+│      os.environ['MR_BRANCH'] = "feature/new-parser"                 │
+│      os.environ['MR_AUTHOR'] = "vishal@internal.com"                │
+│      os.environ['MR_COMMIT'] = "789xyz..."                          │
+│      os.environ['MR_URL'] = "https://git.internal.com/.../42"       │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 5. rate_my_mr_gitlab.py: Create diff file                           │
+│    - Create temp directory: /tmp/tmpXXXXXX                          │
+│    - git init -q                                                    │
+│    - git fetch --depth=100 <clone_url> \                            │
+│        merge-requests/42/head main:main                             │
+│    - git checkout -q -b check FETCH_HEAD                            │
+│    - git diff --no-color main...HEAD > mr_diff.txt                  │
+│    - diff_file_path = "/tmp/tmpXXXXXX/mr_diff.txt"                  │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 6. AI Analysis Pipeline (4 AI Calls)                                │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 6a. Call #1: generate_summary(diff_file_path)                       │
+│                                                                      │
+│     rate_my_mr.py creates OLD format payload:                       │
+│     payload = {                                                      │
+│       "messages": [                                                  │
+│         {"role": "system", "content": "You are a summarizer..."},   │
+│         {"role": "user", "content": "<diff content>"}               │
+│       ]                                                              │
+│     }                                                                │
+│                              ↓                                       │
+│     send_request(payload)                                           │
+│       → Checks: BFA_HOST configured? YES                            │
+│       → Routes to: llm_adapter.send_request()                       │
+│                              ↓                                       │
+│     llm_adapter.py:                                                 │
+│                                                                      │
+│       Step 1: Get JWT token (first call only)                       │
+│         POST http://api-gateway.internal.com:8000/api/token         │
+│         Headers: {"Content-Type": "application/json"}               │
+│         Body: {                                                      │
+│           "subject": "rate-my-mr-my-org%2Fmy-project-42"            │
+│         }                                                            │
+│         Response: {"token": "eyJhbGciOiJIUzI1NiIs..."}              │
+│         → Cache token in LLMAdapter._session_token                  │
+│                              ↓                                       │
+│       Step 2: Transform request (_transform_request)                │
+│         - Read env vars: MR_REPO, MR_BRANCH, MR_AUTHOR, etc.        │
+│         - Convert payload to JSON string: json.dumps(payload)       │
+│         - Construct NEW format:                                     │
+│         new_payload = {                                             │
+│           "repo": "my-org/my-project",                              │
+│           "branch": "feature/new-parser",                           │
+│           "author": "vishal@internal.com",                          │
+│           "commit": "789xyz...",                                    │
+│           "mr_url": "https://git.internal.com/.../42",              │
+│           "prompt": "{\"messages\": [...]}"  ← JSON string!         │
+│         }                                                            │
+│                              ↓                                       │
+│       Step 3: Send to BFA API                                       │
+│         POST http://api-gateway.internal.com:8000/api/rate-my-mr    │
+│         Headers: {                                                   │
+│           "Content-Type": "application/json",                       │
+│           "Authorization": "Bearer eyJhbGciOiJIUzI1NiIs..."         │
+│         }                                                            │
+│         Body: <new_payload from Step 2>                             │
+│         Timeout: 120 seconds                                        │
+│                              ↓                                       │
+│       Step 4: Receive BFA API response                              │
+│         Status: 200 OK                                              │
+│         Response: {                                                  │
+│           "status": "ok",                                            │
+│           "repo": "my-org/my-project",                              │
+│           "branch": "feature/new-parser",                           │
+│           "commit": "789xyz",                                       │
+│           "author": "vishal@internal.com",                          │
+│           "metrics": {                                               │
+│             "summary_text": "This MR adds a new parser class..."    │
+│           },                                                         │
+│           "sent_to": "user not found in slack directory!"           │
+│         }                                                            │
+│                              ↓                                       │
+│       Step 5: Transform response (_transform_response)              │
+│         - Extract: metrics.summary_text                             │
+│         - Wrap in OLD format for backward compatibility:            │
+│         transformed = {                                             │
+│           "content": [                                               │
+│             {"type": "text", "text": "This MR adds a new..."}       │
+│           ]                                                          │
+│         }                                                            │
+│                              ↓                                       │
+│     Return to rate_my_mr.py:                                        │
+│       status_code = 200                                             │
+│       response = transformed (old format)                           │
+│       content = response['content'][0]                              │
+│       content_body = content['text']                                │
+│       print(content_body)                                           │
+│       ✅ Summary generated successfully                             │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 6b. Call #2: generate_initial_code_review(diff_file_path)           │
+│     Same flow as 6a, but:                                           │
+│     - Different system prompt: "You are a code reviewer..."         │
+│     - Reuses cached JWT token (no token API call)                   │
+│     - BFA returns code review analysis in metrics.summary_text      │
+│     ✅ Code review completed                                        │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 6c. Call #3: generate_lint_disable_report(diff_file_path)           │
+│     Same flow, reuses cached token                                  │
+│     - System prompt: "Analyze pylint disables..."                   │
+│     - BFA returns lint analysis in metrics.summary_text             │
+│     - Extract JSON: {"num_lint_disable": 2, "lints_that_disabled":…}│
+│     ✅ Lint analysis completed                                      │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 6d. Call #4: generate_added_code_file() [if needed]                 │
+│     Same flow, reuses cached token                                  │
+│     - Extracts added code for security scanning                     │
+│     ✅ Security code extracted                                      │
+│                                                                      │
+│ Total AI API calls: 1 token + 4 LLM = 5 calls                       │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 7. Calculate LOC, Security, and Final Rating                        │
+│    - LOC analysis: 145 added, 23 removed, net=122                   │
+│    - Rating calculation: 5 - 0 = 5 (no penalties)                   │
+│    - Format report with markdown                                    │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 8. gitlab.update_discussion(proj, mriid, HEADER, report_body, ...)  │
+│                                                                      │
+│    Step 8a: Fetch existing discussions                              │
+│      GET /api/v4/projects/.../merge_requests/42/discussions         │
+│      Response: []  (empty - no existing discussions)                │
+│                                                                      │
+│    Step 8b: Search for existing note                                │
+│      for discussion in []:  ← empty list                            │
+│        ...                                                           │
+│      found_note = False  ⚠️ No existing note found                  │
+│                                                                      │
+│    Step 8c: Create new discussion                                   │
+│      POST /api/v4/projects/.../merge_requests/42/discussions        │
+│      Body: {                                                         │
+│        "body": ":star2: MR Quality Rating Report\n..."             │
+│      }                                                               │
+│      Status: 201 Created                                            │
+│      ✅ New comment posted to MR #42                                │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+                    ✅ WORKFLOW COMPLETE
+         User sees new comment in GitLab MR (see visual example below)
+```
+
+#### Scenario 2: MR Updated (User Pushes New Commits)
+
+**Same flow but comment gets UPDATED instead of creating new:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ 1. GitLab Event: User pushes new commits to MR #42                  │
+│    - User adds 2 more commits to feature/new-parser                 │
+│    - GitLab triggers webhook again                                  │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 2-7. Same flow as Scenario 1                                        │
+│      - Webhook triggered with updated event data                    │
+│      - New REQUEST_ID generated: 20251114_145530_12345678           │
+│      - Docker container spawned                                     │
+│      - MR metadata extracted (NEW commit SHA: def456...)            │
+│      - Git diff generated with new changes                          │
+│      - 4 AI calls made with updated diff                            │
+│      - JWT token acquired (or reused if still valid)                │
+│      - New LOC calculated: 178 added, 30 removed, net=148           │
+│      - New rating calculated: 5/5 (still no penalties)              │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ 8. gitlab.update_discussion() - UPDATE SAME COMMENT                 │
+│                                                                      │
+│    Step 8a: Fetch existing discussions                              │
+│      GET /api/v4/projects/.../merge_requests/42/discussions         │
+│      Response: [                                                     │
+│        {                                                             │
+│          "id": "abc123",                                             │
+│          "notes": [                                                  │
+│            {                                                         │
+│              "id": "note_xyz789",                                    │
+│              "body": ":star2: MR Quality Rating Report\n...",       │
+│              "resolved": false                                       │
+│            }                                                         │
+│          ]                                                           │
+│        },                                                            │
+│        ... other discussions ...                                     │
+│      ]                                                               │
+│                                                                      │
+│    Step 8b: Search for existing note (gitlab.py line 177-198)       │
+│      for discussion in discussions:                                 │
+│        for note in discussion.notes:                                │
+│          if note.body.startswith(":star2: MR Quality Rating"):      │
+│            ✅ FOUND! (line 180-181)                                 │
+│            found_note = True                                        │
+│            discussion_id = "abc123"                                 │
+│            note_id = "note_xyz789"                                  │
+│            break                                                     │
+│                                                                      │
+│    Step 8c: Check if content differs (line 189)                     │
+│      old_body = note.body                                           │
+│      new_body = HEADER + report_body                                │
+│      if old_body != new_body:                                       │
+│        ✅ Content differs - UPDATE                                  │
+│        PUT /api/v4/projects/.../discussions/abc123/notes/note_xyz…  │
+│        Body: {                                                       │
+│          "body": ":star2: MR Quality Rating Report\n<UPDATED>"     │
+│        }                                                             │
+│        Status: 200 OK                                               │
+│                                                                      │
+│    Step 8d: Update resolved status if needed                        │
+│      if must_not_be_resolved and note.resolved:                     │
+│        unresolve_note() (line 186)                                  │
+│      if not must_not_be_resolved and not note.resolved:             │
+│        resolve_note() (line 193-194)                                │
+│                                                                      │
+│    ✅ SAME COMMENT UPDATED                                          │
+│       - No new comment created                                      │
+│       - Existing comment shows updated metrics                      │
+│       - User sees "edited" badge in GitLab UI                       │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+                    ✅ WORKFLOW COMPLETE
+          User sees UPDATED comment in GitLab MR (not a new comment)
+```
+
+#### Visual Example: GitLab MR Comment
+
+**How the comment appears in GitLab MR UI:**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ GitLab Merge Request: !42 Add new parser functionality                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ 📋 Overview   💬 Discussion   🔄 Changes   📊 Commits                       │
+│                                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  👤 MR Validator Bot  •  2 minutes ago  •  edited                           │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │ :star2: MR Quality Rating Report :star2:                              │  │
+│  │ ========================================                               │  │
+│  │                                                                        │  │
+│  │ ## Overall Rating: 5/5                                                │  │
+│  │                                                                        │  │
+│  │ ⭐⭐⭐⭐⭐                                                                │  │
+│  │                                                                        │  │
+│  │ ### Quality Assessment Results                                        │  │
+│  │                                                                        │  │
+│  │ #### 🔍 Summary Analysis                                              │  │
+│  │ ✅ AI-powered summary generated successfully                          │  │
+│  │                                                                        │  │
+│  │ #### 🔬 Code Review Analysis                                          │  │
+│  │ ✅ Comprehensive AI code review completed                             │  │
+│  │                                                                        │  │
+│  │ #### 📈 Lines of Code Analysis                                        │  │
+│  │ - **Lines Added**: 178                                                │  │
+│  │ - **Lines Removed**: 30                                               │  │
+│  │ - **Net Change**: 148                                                 │  │
+│  │                                                                        │  │
+│  │ #### ⚠️ Lint Disable Analysis                                         │  │
+│  │ - **New Lint Disables**: 0                                            │  │
+│  │ - **Disabled Rules**: None                                            │  │
+│  │                                                                        │  │
+│  │ ### Scoring Breakdown                                                 │  │
+│  │ | Metric | Status | Impact |                                          │  │
+│  │ |--------|--------|--------|                                          │  │
+│  │ | Lines of Code | 148 lines | Within limits |                        │  │
+│  │ | Lint Disables | 0 new disables | No new disables |                 │  │
+│  │                                                                        │  │
+│  │ **Final Score**: 5/5 points                                           │  │
+│  │                                                                        │  │
+│  │ ✅ **Quality assessment passed** - MR meets quality standards.       │  │
+│  │                                                                        │  │
+│  │ ### Notes:                                                            │  │
+│  │ - Detailed analysis available in container execution logs            │  │
+│  │ - AI-powered insights have been generated for this MR                │  │
+│  │ - Continue monitoring quality metrics in future MRs                  │  │
+│  │                                                                        │  │
+│  │ ---                                                                    │  │
+│  │ *Generated by AI-powered MR quality assessment*                       │  │
+│  │ *Scoring: LOC Analysis + Lint Pattern Detection + AI Code Review*    │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+│  💬 Reply...                                                                 │
+│                                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  👤 Alice Developer  •  5 minutes ago                                       │
+│  Looks good! Ready to merge.                                                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Features of the Comment:**
+
+1. **Single Comment**: Always the same discussion thread (not multiple comments)
+2. **Updated in Place**: Shows "edited" badge when MR changes
+3. **Visual Rating**: Star emojis (⭐) for quick assessment
+4. **Comprehensive Metrics**: LOC, lint analysis, AI review status
+5. **Color-Coded Status**: ✅ for success, ⚠️ for warnings, ❌ for failures
+6. **Actionable**: Must-not-be-resolved if score < 3 (blocks merge)
+
+**Example: Low Quality MR (Score 2/5)**
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│  👤 MR Validator Bot  •  1 minute ago  •  unresolved                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │ :star2: MR Quality Rating Report :star2:                            │  │
+│  │ ========================================                             │  │
+│  │                                                                      │  │
+│  │ ## Overall Rating: 2/5                                              │  │
+│  │                                                                      │  │
+│  │ ⭐⭐⚪⚪⚪                                                              │  │
+│  │                                                                      │  │
+│  │ ### Quality Assessment Results                                      │  │
+│  │ ...                                                                  │  │
+│  │ #### 📈 Lines of Code Analysis                                      │  │
+│  │ - **Lines Added**: 847                                              │  │
+│  │ - **Lines Removed**: 12                                             │  │
+│  │ - **Net Change**: 835                                               │  │
+│  │                                                                      │  │
+│  │ #### ⚠️ Lint Disable Analysis                                       │  │
+│  │ - **New Lint Disables**: 5                                          │  │
+│  │ - **Disabled Rules**: pylint:disable=too-many-locals, ...          │  │
+│  │                                                                      │  │
+│  │ ### Scoring Breakdown                                               │  │
+│  │ | Metric | Status | Impact |                                        │  │
+│  │ |--------|--------|--------|                                        │  │
+│  │ | Lines of Code | 835 lines | ⚠️ Exceeds 500 line limit |          │  │
+│  │ | Lint Disables | 5 new disables | ⚠️ New lint suppressions added |│  │
+│  │                                                                      │  │
+│  │ **Final Score**: 2/5 points                                         │  │
+│  │                                                                      │  │
+│  │ 💣 **QUALITY ISSUES IDENTIFIED** 💣                                 │  │
+│  │ This MR has significant quality concerns that should be addressed   │  │
+│  │ before merging. The assessment will be automatically updated when   │  │
+│  │ changes are pushed.                                                 │  │
+│  │                                                                      │  │
+│  │ ### Recommended Actions:                                            │  │
+│  │ - Review the AI-generated feedback in the container logs           │  │
+│  │ - Address identified code quality issues                           │  │
+│  │ - Consider breaking large changes into smaller MRs                 │  │
+│  │ - Remove unnecessary lint disable statements                       │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                            │
+│  🔒 This thread must be resolved before merging                           │
+│                                                                            │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+**Note**: When score < 3, the discussion is marked as "must be resolved", which can block merging depending on GitLab project settings.
+
 ---
 
 ## Component Architecture
