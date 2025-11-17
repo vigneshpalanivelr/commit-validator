@@ -2,6 +2,17 @@
 
 Automated MR validation with AI-powered code review, security scanning, and quality metrics.
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Validators](#validators)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [License](#license)
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -365,19 +376,19 @@ docker run --rm --env-file mrproper.env \
 
 ### Quality Assessment Results
 
-#### :mag: Summary Analysis
-:white_check_mark: AI-powered summary generated successfully
+#### [*] Summary Analysis
+[+] AI-powered summary generated successfully
 
 <details>
 <summary>Click to expand AI Summary</summary>
 This MR adds authentication middleware...
 </details>
 
-#### :cyclone: Cyclomatic Complexity Analysis
+#### [~] Cyclomatic Complexity Analysis
 - **Average Complexity**: 8 (Good)
 - **Methods Analyzed**: 12
 
-#### :shield: Security Scan Analysis
+#### [#] Security Scan Analysis
 - **HIGH Severity Issues**: 0
 - **MEDIUM Severity Issues**: 1
 - **LOW Severity Issues**: 3

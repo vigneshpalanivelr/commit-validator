@@ -2,62 +2,112 @@
 
 Technical documentation for developers and system architects.
 
+## Table of Contents
+
+- [System Overview](#system-overview)
+- [Component Architecture](#component-architecture)
+- [LLM Integration](#llm-integration)
+- [Configuration System](#configuration-system)
+- [Logging System](#logging-system)
+- [Analysis Pipeline](#analysis-pipeline)
+- [GitLab API Integration](#gitlab-api-integration)
+- [Security Model](#security-model)
+- [Performance Metrics](#performance-metrics)
+- [Error Handling](#error-handling)
+- [Adding New Features](#adding-new-features)
+- [Related Documentation](#related-documentation)
+
+---
+
 ## System Overview
 
 ```mermaid
 flowchart TB
-    subgraph GitLab
-        A[MR Event]
+    subgraph GitLab["◆ GitLab"]
+        A[▸ MR Event]
     end
 
-    subgraph Webhook["Webhook Server :9912"]
-        B[Tornado HTTP]
-        C[Request Router]
+    subgraph Webhook["◉ Webhook Server :9912"]
+        B[⟳ Tornado HTTP]
+        C[⇆ Request Router]
     end
 
-    subgraph Docker["Docker Containers"]
-        D1[rate-my-mr]
-        D2[mrproper-clang-format]
-        D3[mrproper-message]
+    subgraph Docker["▣ Docker Containers"]
+        D1[★ rate-my-mr]
+        D2[⚙ mrproper-clang-format]
+        D3[▤ mrproper-message]
     end
 
-    subgraph Services["External Services"]
-        E[GitLab API]
-        F[BFA/LLM Service]
+    subgraph Services["◈ External Services"]
+        E[⌘ GitLab API]
+        F[◎ BFA/LLM Service]
     end
 
-    A -->|POST| B
+    A -->|"POST /mr-proper/*"| B
     B --> C
-    C -->|spawn| D1
-    C -->|spawn| D2
-    C -->|spawn| D3
-    D1 --> E
-    D1 --> F
-    D2 --> E
-    D3 --> E
+    C -->|"docker run"| D1
+    C -->|"docker run"| D2
+    C -->|"docker run"| D3
+    D1 -->|"GET /api/v4"| E
+    D1 -->|"POST /api/rate-my-mr"| F
+    D2 -->|"GET /api/v4"| E
+    D3 -->|"GET /api/v4"| E
+
+    classDef gitlab fill:#fc6d26,color:#fff,stroke:#e24329
+    classDef webhook fill:#4a90e2,color:#fff,stroke:#2171c7
+    classDef docker fill:#0db7ed,color:#fff,stroke:#099dd9
+    classDef services fill:#f9a825,color:#fff,stroke:#f57f17
+
+    class A gitlab
+    class B,C webhook
+    class D1,D2,D3 docker
+    class E,F services
 ```
 
 ### Request Flow
 
 ```mermaid
 sequenceDiagram
-    participant GL as GitLab
-    participant WH as Webhook
-    participant DC as Docker
-    participant VA as Validator
-    participant BFA as BFA Service
+    autonumber
+    participant GL as ◆ GitLab
+    participant WH as ◉ Webhook Server
+    participant DC as ▣ Docker
+    participant VA as ★ Validator
+    participant BFA as ◎ BFA Service
 
-    GL->>WH: POST /mr-proper/rate-my-mr
-    Note over WH: Generate REQUEST_ID
-    WH->>DC: docker run rate-my-mr
-    DC->>VA: Start container
-    VA->>GL: GET MR data
-    VA->>BFA: POST /api/token
-    BFA-->>VA: JWT token
-    VA->>BFA: POST /api/rate-my-mr (x4)
-    BFA-->>VA: AI analysis
-    VA->>GL: POST discussion
-    VA-->>DC: Exit 0
+    rect rgb(252, 109, 38, 0.1)
+        Note over GL,WH: Webhook Trigger
+        GL->>WH: POST /mr-proper/rate-my-mr
+        Note over WH: Generate REQUEST_ID<br/>20251117_101804_715563
+    end
+
+    rect rgb(13, 183, 237, 0.1)
+        Note over WH,VA: Container Lifecycle
+        WH->>DC: docker run --env REQUEST_ID=...
+        DC->>VA: Start container (mr-rate-my-mr-42-71556)
+    end
+
+    rect rgb(249, 168, 37, 0.1)
+        Note over VA,BFA: Authentication & Analysis
+        VA->>GL: GET /api/v4/projects/.../merge_requests/42
+        GL-->>VA: MR metadata (title, author, branch)
+        VA->>BFA: POST /api/token<br/>{"subject": "rate-my-mr-org%2Frepo-42"}
+        BFA-->>VA: {"token": "eyJhbGci..."}
+        Note over VA: Cache token for reuse
+
+        loop 4 AI Calls (Summary, Review, Lint, LOC)
+            VA->>BFA: POST /api/rate-my-mr<br/>Authorization: Bearer {token}
+            BFA-->>VA: AI analysis response
+        end
+    end
+
+    rect rgb(76, 175, 80, 0.1)
+        Note over VA,GL: Report & Cleanup
+        VA->>GL: POST /api/v4/.../discussions<br/>Rating: 4/5 ★
+        GL-->>VA: 201 Created
+        VA-->>DC: Exit 0 (success)
+        DC-->>WH: Container completed
+    end
 ```
 
 ---
@@ -111,13 +161,30 @@ commit-validator/
 
 ```mermaid
 flowchart TD
-    A[send_request] --> B{BFA_HOST set?}
-    B -->|Yes| C[LLM Adapter]
-    B -->|No| D[Legacy Direct]
-    C --> E[Get JWT Token]
-    E --> F[Transform Request]
-    F --> G[POST /api/rate-my-mr]
-    D --> H[POST /generate]
+    A[📤 send_request] --> B{🔍 BFA_HOST<br/>configured?}
+    B -->|"✅ Yes"| C[🤖 LLM Adapter Mode]
+    B -->|"❌ No"| D[📡 Legacy Direct Mode]
+
+    C --> E[🔑 Get JWT Token<br/>POST /api/token]
+    E --> F[🔄 Transform Request<br/>Add metadata fields]
+    F --> G[📨 POST /api/rate-my-mr<br/>Authorization: Bearer]
+    G --> H[✨ Transform Response<br/>Extract summary_text]
+
+    D --> I[📨 POST /generate<br/>Direct AI call]
+    I --> J[📥 Raw Response<br/>No transformation]
+
+    H --> K[🎯 Return to caller]
+    J --> K
+
+    classDef decision fill:#ffd54f,stroke:#f9a825,color:#000
+    classDef newmode fill:#4caf50,stroke:#388e3c,color:#fff
+    classDef legacy fill:#ff9800,stroke:#f57c00,color:#fff
+    classDef result fill:#2196f3,stroke:#1976d2,color:#fff
+
+    class B decision
+    class C,E,F,G,H newmode
+    class D,I,J legacy
+    class K result
 ```
 
 ### JWT Token Flow
@@ -185,9 +252,19 @@ Headers: Authorization: Bearer {token}
 
 ```mermaid
 flowchart LR
-    A[Default Config] --> B[Repo Config]
-    B --> C[Deep Merge]
-    C --> D[Final Config]
+    A[📋 Default Config<br/>All features enabled] --> B[📁 Repo Config<br/>.rate-my-mr.yaml]
+    B --> C[🔀 Deep Merge<br/>Override defaults]
+    C --> D[✅ Final Config<br/>Applied to pipeline]
+
+    classDef default fill:#e0e0e0,stroke:#9e9e9e,color:#000
+    classDef repo fill:#fff59d,stroke:#fbc02d,color:#000
+    classDef merge fill:#81d4fa,stroke:#29b6f6,color:#000
+    classDef final fill:#a5d6a7,stroke:#66bb6a,color:#000
+
+    class A default
+    class B repo
+    class C merge
+    class D final
 ```
 
 ### config_loader.py
@@ -311,17 +388,50 @@ def configure_child_loggers():
 
 ```mermaid
 stateDiagram-v2
-    [*] --> LoadConfig
-    LoadConfig --> CreateDiff
-    CreateDiff --> AISummary
-    AISummary --> AICodeReview
-    AICodeReview --> LOCAnalysis
-    LOCAnalysis --> LintCheck
-    LintCheck --> SecurityScan
-    SecurityScan --> Complexity
-    Complexity --> Rating
-    Rating --> PostToGitLab
-    PostToGitLab --> [*]
+    [*] --> LoadConfig: Start Validation
+
+    state "📁 Configuration" as Config {
+        LoadConfig: 📋 Load .rate-my-mr.yaml
+        LoadConfig --> CreateDiff
+        CreateDiff: 📊 Generate Git Diff
+    }
+
+    state "🤖 AI Analysis (Conditional)" as AI {
+        CreateDiff --> AISummary
+        AISummary: 📝 Generate Summary
+        AISummary --> AICodeReview
+        AICodeReview: 🔍 Code Review
+    }
+
+    state "📈 Metrics Analysis (Conditional)" as Metrics {
+        AICodeReview --> LOCAnalysis
+        LOCAnalysis: 📏 Lines of Code
+        LOCAnalysis --> LintCheck
+        LintCheck: ⚠️ Lint Disables
+        LintCheck --> SecurityScan
+        SecurityScan: 🛡️ Bandit Scan
+        SecurityScan --> Complexity
+        Complexity: 🔄 Cyclomatic CC
+    }
+
+    state "🎯 Reporting" as Report {
+        Complexity --> Rating
+        Rating: ⭐ Calculate Score
+        Rating --> PostToGitLab
+        PostToGitLab: 💬 Post Discussion
+    }
+
+    PostToGitLab --> [*]: Exit 0
+
+    note right of AI
+        Skip if disabled in config
+        features.ai_summary: false
+    end note
+
+    note right of Metrics
+        Each step respects config flags
+        features.security_scan: true
+    end note
 ```
 
 ### Pipeline Steps
@@ -389,13 +499,37 @@ def update_discussion(proj, mriid, header, body, must_not_be_resolved):
 
 ```mermaid
 flowchart TD
-    A[Fetch Discussions] --> B{Found existing?}
-    B -->|Yes| C[Update Note]
-    B -->|No| D[Create Discussion]
-    C --> E{Content changed?}
-    E -->|Yes| F[PUT /notes/:id]
-    E -->|No| G[Skip update]
-    D --> H[POST /discussions]
+    A[📋 Fetch All MR Discussions<br/>GET /discussions] --> B{🔍 Found existing<br/>Rate My MR comment?}
+
+    B -->|"✅ Yes - Update"| C[📝 Compare Content]
+    B -->|"❌ No - Create"| D[📨 POST /discussions<br/>Create new thread]
+
+    C --> E{📊 Content<br/>changed?}
+    E -->|"✅ Different"| F[✏️ PUT /notes/:id<br/>Update existing comment]
+    E -->|"❌ Same"| G[⏭️ Skip update<br/>Save API call]
+
+    D --> H[✅ New discussion created]
+    F --> I[✅ Comment updated]
+    G --> J[✅ No action needed]
+
+    H --> K{⭐ Score >= 3?}
+    I --> K
+    K -->|"✅ Pass"| L[🟢 Set resolved = true]
+    K -->|"❌ Fail"| M[🔴 Set resolved = false]
+
+    classDef fetch fill:#e3f2fd,stroke:#1976d2,color:#000
+    classDef decision fill:#fff3e0,stroke:#ff9800,color:#000
+    classDef action fill:#f3e5f5,stroke:#9c27b0,color:#000
+    classDef success fill:#e8f5e9,stroke:#4caf50,color:#000
+    classDef pass fill:#4caf50,stroke:#2e7d32,color:#fff
+    classDef fail fill:#f44336,stroke:#c62828,color:#fff
+
+    class A fetch
+    class B,E,K decision
+    class C,D,F,G action
+    class H,I,J success
+    class L pass
+    class M fail
 ```
 
 ---
