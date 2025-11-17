@@ -229,11 +229,10 @@ def format_rating_report(summary_success, summary_content, review_success, revie
     if cc_data and isinstance(cc_data, dict):
         avg_cc = cc_data.get('avg_cc', 0)
         method_cc = cc_data.get('method_wise_cc', {})
-        cc_status = "Good" if avg_cc <= 10 else "⚠️ High complexity"
+        cc_status = "Good" if avg_cc <= 10 else "High complexity"
         report += f"- **Average Complexity**: {avg_cc} ({cc_status})\n"
         if method_cc:
             report += f"- **Methods Analyzed**: {len(method_cc)}\n"
-            # Show high complexity methods
             high_cc_methods = {k: v for k, v in method_cc.items() if v > 10}
             if high_cc_methods:
                 report += f"- **High Complexity Methods** (CC > 10):\n"
@@ -253,25 +252,16 @@ def format_rating_report(summary_success, summary_content, review_success, revie
         medium_issues = severity_count.get('MEDIUM', 0)
         low_issues = severity_count.get('LOW', 0)
 
-        if high_issues > 0:
-            report += f"- :red_circle: **HIGH Severity Issues**: {high_issues}\n"
-        else:
-            report += f"- :green_circle: **HIGH Severity Issues**: {high_issues}\n"
-
-        if medium_issues > 0:
-            report += f"- :orange_circle: **MEDIUM Severity Issues**: {medium_issues}\n"
-        else:
-            report += f"- :green_circle: **MEDIUM Severity Issues**: {medium_issues}\n"
-
-        report += f"- :yellow_circle: **LOW Severity Issues**: {low_issues}\n"
+        report += f"- **HIGH Severity Issues**: {high_issues} {'(Critical!)' if high_issues > 0 else ''}\n"
+        report += f"- **MEDIUM Severity Issues**: {medium_issues}\n"
+        report += f"- **LOW Severity Issues**: {low_issues}\n"
         report += f"- **Security Score**: {avg_score:.4f} issues/LOC\n"
 
-        # Show specific security issues if any
         security_report = ss_data.get('security_report', {})
         results = security_report.get('results', [])
         if results:
             report += "\n<details>\n<summary>Click to expand Security Issues</summary>\n\n"
-            for issue in results[:10]:  # Limit to 10 issues
+            for issue in results[:10]:
                 report += f"- **{issue.get('issue_severity', 'UNKNOWN')}** - {issue.get('issue_text', 'Unknown issue')}\n"
                 report += f"  - Test: `{issue.get('test_name', 'unknown')}`\n"
                 report += f"  - Line: {issue.get('line_number', 'N/A')}\n"
@@ -287,10 +277,10 @@ def format_rating_report(summary_success, summary_content, review_success, revie
     report += f"""### Scoring Breakdown
 | Metric | Status | Impact |
 |--------|--------|--------|
-| Lines of Code | {loc_data.get('net_lines_of_code_change', 0)} lines | {'Within limits' if loc_data.get('net_lines_of_code_change', 0) <= 500 else '⚠️ Exceeds 500 line limit'} |
-| Lint Disables | {lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0} new disables | {'No new disables' if (isinstance(lint_data, dict) and lint_data.get('num_lint_disable', 0) == 0) else '⚠️ New lint suppressions added'} |
-| Cyclomatic Complexity | Avg: {cc_data.get('avg_cc', 'N/A') if isinstance(cc_data, dict) else 'N/A'} | {'Good' if isinstance(cc_data, dict) and cc_data.get('avg_cc', 0) <= 10 else '⚠️ High complexity'} |
-| Security Issues | {(ss_data.get('severity_count', {}).get('HIGH', 0) + ss_data.get('severity_count', {}).get('MEDIUM', 0)) if isinstance(ss_data, dict) else 0} HIGH/MEDIUM | {'No critical issues' if isinstance(ss_data, dict) and ss_data.get('severity_count', {}).get('HIGH', 0) == 0 else '⚠️ Security concerns'} |
+| Lines of Code | {loc_data.get('net_lines_of_code_change', 0)} lines | {'Within limits' if loc_data.get('net_lines_of_code_change', 0) <= 500 else 'Exceeds 500 line limit'} |
+| Lint Disables | {lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0} new disables | {'No new disables' if (isinstance(lint_data, dict) and lint_data.get('num_lint_disable', 0) == 0) else 'New lint suppressions added'} |
+| Cyclomatic Complexity | Avg: {cc_data.get('avg_cc', 'N/A') if isinstance(cc_data, dict) else 'N/A'} | {'Good' if isinstance(cc_data, dict) and cc_data.get('avg_cc', 0) <= 10 else 'High complexity'} |
+| Security Issues | {(ss_data.get('severity_count', {}).get('HIGH', 0) + ss_data.get('severity_count', {}).get('MEDIUM', 0)) if isinstance(ss_data, dict) else 0} HIGH/MEDIUM | {'No critical issues' if isinstance(ss_data, dict) and ss_data.get('severity_count', {}).get('HIGH', 0) == 0 else 'Security concerns'} |
 
 **Final Score**: {rating_score}/5 points
 
@@ -542,14 +532,13 @@ Please check the MR manually and retry if necessary.
         try:
             cc_data = cal_cc(diff_file_path)
             if cc_data:
-                slog.info("Cyclomatic complexity analysis completed",
+                slog.info("Cyclomatic complexity completed",
                           avg_cc=cc_data.get('avg_cc', 0),
-                          methods_analyzed=len(cc_data.get('method_wise_cc', {})))
+                          methods=len(cc_data.get('method_wise_cc', {})))
             else:
-                slog.warning("Cyclomatic complexity analysis returned no data")
                 cc_data = {}
         except Exception as cc_error:
-            slog.warning("Cyclomatic complexity analysis failed", error=str(cc_error))
+            slog.warning("Cyclomatic complexity failed", error=str(cc_error))
             cc_data = {}
 
         # 6. Security scan
@@ -558,13 +547,12 @@ Please check the MR manually and retry if necessary.
         try:
             ss_data = cal_ss(diff_file_path)
             if ss_data:
-                severity_count = ss_data.get('severity_count', {})
+                severity = ss_data.get('severity_count', {})
                 slog.info("Security scan completed",
-                          high=severity_count.get('HIGH', 0),
-                          medium=severity_count.get('MEDIUM', 0),
-                          low=severity_count.get('LOW', 0))
+                          high=severity.get('HIGH', 0),
+                          medium=severity.get('MEDIUM', 0),
+                          low=severity.get('LOW', 0))
             else:
-                slog.warning("Security scan returned no data")
                 ss_data = {}
         except Exception as ss_error:
             slog.warning("Security scan failed", error=str(ss_error))
