@@ -41,25 +41,36 @@ DevOps documentation for deployment, monitoring, debugging, and maintenance.
 
 ```mermaid
 flowchart TB
-    subgraph Host["Docker Host"]
-        A[Webhook Container<br/>Port 9912]
-        B[Validator Containers<br/>Spawned on demand]
-        C[Shared Volume<br/>/mr-validator-logs]
+    subgraph Host["▣ Docker Host"]
+        A[◉ Webhook Container<br/>Port 9912<br/>Long-running]
+        B[★ Validator Containers<br/>Spawned on demand<br/>Short-lived]
+        C[▤ Shared Volume<br/>/mr-validator-logs<br/>Persistent storage]
     end
 
-    subgraph External
-        D[GitLab]
-        E[BFA Service]
-        F[NFS Storage]
+    subgraph External["◈ External Services"]
+        D[◆ GitLab<br/>Source control<br/>API v4]
+        E[◎ BFA Service<br/>AI/LLM<br/>JWT auth]
+        F[▦ NFS Storage<br/>Log persistence<br/>Shared mount]
     end
 
-    D -->|Webhook| A
-    A -->|Spawn| B
-    B -->|POST| E
-    B -->|API| D
-    A --> C
-    B --> C
-    C --> F
+    D -->|"1. POST webhook<br/>MR event"| A
+    A -->|"2. docker run<br/>--env-file"| B
+    B -->|"3. POST /api/rate-my-mr<br/>Bearer token"| E
+    B -->|"4. GET /api/v4<br/>PRIVATE-TOKEN"| D
+    A -->|"Write logs"| C
+    B -->|"Write logs"| C
+    C -->|"Mount"| F
+
+    classDef host fill:#0db7ed,color:#fff,stroke:#099dd9
+    classDef external fill:#f9a825,color:#fff,stroke:#f57f17
+    classDef gitlab fill:#fc6d26,color:#fff,stroke:#e24329
+    classDef bfa fill:#4caf50,color:#fff,stroke:#388e3c
+    classDef storage fill:#9c27b0,color:#fff,stroke:#7b1fa2
+
+    class A,B,C host
+    class D gitlab
+    class E bfa
+    class F storage
 ```
 
 ### Production Setup
@@ -358,17 +369,29 @@ docker exec mrproper-webhook-vp-test env | grep BFA_HOST
 
 ```mermaid
 flowchart TD
-    A[User Reports Issue] --> B[Get MR IID]
-    B --> C[Find REQUEST_ID in webhook log]
-    C --> D[Find validator log]
+    A[▸ User Reports Issue<br/>MR not validated] --> B[1. Get MR IID<br/>from GitLab URL]
+    B --> C[2. Find REQUEST_ID<br/>grep webhook-server.log]
+    C --> D[3. Find validator log<br/>validations/DATE/PROJECT/mr-IID/]
     D --> E{Log exists?}
-    E -->|No| F[Container never started]
-    E -->|Yes| G[Check for errors]
+    E -->|No| F[✗ Container never started<br/>Check Docker daemon]
+    E -->|Yes| G[4. Check for errors<br/>grep ERROR|WARN]
     G --> H{Error type?}
-    H -->|Auth| I[Check tokens]
-    H -->|Timeout| J[Check service connectivity]
-    H -->|Config| K[Check repo .rate-my-mr.yaml]
-    H -->|Git| L[Check repository access]
+    H -->|Auth 401| I[✓ Check tokens<br/>GITLAB_ACCESS_TOKEN<br/>JWT token validity]
+    H -->|Timeout| J[✓ Check connectivity<br/>BFA_HOST reachable<br/>API_TIMEOUT setting]
+    H -->|Config| K[✓ Check repo config<br/>.rate-my-mr.yaml syntax<br/>Feature flags]
+    H -->|Git clone| L[✓ Check repo access<br/>Token permissions<br/>Network connectivity]
+
+    classDef start fill:#4a90e2,color:#fff,stroke:#2171c7
+    classDef step fill:#64b5f6,color:#fff,stroke:#42a5f5
+    classDef decision fill:#ffa726,color:#fff,stroke:#fb8c00
+    classDef error fill:#ef5350,color:#fff,stroke:#e53935
+    classDef solution fill:#66bb6a,color:#fff,stroke:#43a047
+
+    class A start
+    class B,C,D,G step
+    class E,H decision
+    class F error
+    class I,J,K,L solution
 ```
 
 ### Quick Debug Script
@@ -1393,19 +1416,36 @@ mv logs_*.tar.gz /archive/mr-validator/
 
 ```mermaid
 flowchart TD
-    A[Pull latest code] --> B[Build new images]
-    B --> C[Test locally]
+    A[1. Pull latest code<br/>git pull origin main] --> B[2. Build new images<br/>./build-docker-images]
+    B --> C[3. Test locally<br/>docker run --rm rate-my-mr --help]
     C --> D{Tests pass?}
-    D -->|No| E[Fix issues]
+    D -->|No| E[Fix issues<br/>Review build logs]
     E --> C
-    D -->|Yes| F[Stop webhook server]
-    F --> G[Backup current config]
-    G --> H[Deploy new images]
-    H --> I[Start webhook server]
-    I --> J[Verify health]
+    D -->|Yes| F[4. Stop webhook server<br/>docker stop mrproper-webhook]
+    F --> G[5. Backup config<br/>cp mrproper.env .backup]
+    G --> H[6. Deploy new images<br/>docker tag :latest]
+    H --> I[7. Start webhook server<br/>docker start mrproper-webhook]
+    I --> J[8. Verify health<br/>curl localhost:9912]
     J --> K{Healthy?}
-    K -->|No| L[Rollback]
-    K -->|Yes| M[Done]
+    K -->|No| L[✗ Rollback<br/>Restore from backup]
+    K -->|Yes| M[✓ Done<br/>Upgrade complete]
+
+    classDef prepare fill:#4a90e2,color:#fff,stroke:#2171c7
+    classDef build fill:#29b6f6,color:#fff,stroke:#03a9f4
+    classDef test fill:#ffa726,color:#fff,stroke:#fb8c00
+    classDef deploy fill:#ab47bc,color:#fff,stroke:#8e24aa
+    classDef verify fill:#66bb6a,color:#fff,stroke:#43a047
+    classDef error fill:#ef5350,color:#fff,stroke:#e53935
+    classDef success fill:#4caf50,color:#fff,stroke:#388e3c
+
+    class A,G prepare
+    class B,H build
+    class C,E test
+    class D,K test
+    class F,I deploy
+    class J verify
+    class L error
+    class M success
 ```
 
 **Steps:**
