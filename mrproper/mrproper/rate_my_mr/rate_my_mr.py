@@ -4,11 +4,51 @@ from prettytable import PrettyTable
 import re
 import json
 import os
+import time
+import logging
 from .loc import LOCCalculator
 from .params import RMMConstants, RMMWeights, RMMLimits, get_all_applicable_checks
 from .cyclomatic_complexity import CyclomaticComplexityCalculator
 from .security_scan import SecurityScanner
 from .cal_rating import CalRating
+
+# Import LLM adapter for new API integration
+try:
+    from . import llm_adapter
+    HAS_LLM_ADAPTER = True
+except ImportError:
+    HAS_LLM_ADAPTER = False
+
+# Get logger (will use the logger set up by rate_my_mr_gitlab.py)
+logger = logging.getLogger(__name__)
+
+# Helper for structured logging
+class StructuredLog:
+    """Lightweight structured logging helper that uses module logger."""
+    @staticmethod
+    def _fmt(msg, **kwargs):
+        if kwargs:
+            fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
+            return f'{msg} | {fields}'
+        return msg
+
+    @staticmethod
+    def debug(msg, **kwargs):
+        logger.debug(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def info(msg, **kwargs):
+        logger.info(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def warning(msg, **kwargs):
+        logger.warning(StructuredLog._fmt(msg, **kwargs))
+
+    @staticmethod
+    def error(msg, **kwargs):
+        logger.error(StructuredLog._fmt(msg, **kwargs))
+
+slog = StructuredLog
 
 
 def print_banner(title):
@@ -16,48 +56,99 @@ def print_banner(title):
     print(f"{banner}\n{title.center(90)}\n{banner}")
 
 
-def send_request(payload, url=RMMConstants.agent_url.value):
-    print(f"[DEBUG] AI Service Request - URL: {url}")
-    print(f"[DEBUG] AI Service Request - Payload size: {len(str(payload))} chars")
-    print(f"[DEBUG] AI Service Request - Timeout: 120 seconds")
+def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
+    """
+    Send request to AI service with retry logic.
 
-    try:
-        print("[DEBUG] Sending POST request to AI service...")
-        resp = requests.post(url, json=payload, timeout=120)
-        print(f"[DEBUG] AI Service Response - Status Code: {resp.status_code}")
-        print(f"[DEBUG] AI Service Response - Content Length: {len(resp.content)}")
+    Automatically routes to new LLM adapter if BFA_HOST is configured,
+    otherwise uses legacy direct connection.
 
-        # Raise an error for bad responses (4xx and 5xx)
-        resp.raise_for_status()
+    Args:
+        payload: JSON payload to send
+        url: AI service URL (ignored if using LLM adapter)
+        max_retries: Maximum number of retry attempts (default: 3)
 
-        response_json = resp.json()
-        print(f"[DEBUG] AI Service Response - JSON parsed successfully")
-        return resp.status_code, response_json
+    Returns:
+        tuple: (status_code, response_json) or (None/status_code, error_message)
+    """
+    # Check if we should use the new LLM adapter
+    use_adapter = HAS_LLM_ADAPTER and os.environ.get('BFA_HOST')
 
-    except requests.exceptions.HTTPError as http_err:
-        print(f"[DEBUG] AI Service HTTP Error: {http_err}")
-        print(f"[DEBUG] Response content: {resp.content[:500] if 'resp' in locals() else 'No response'}")
-        return resp.status_code, str(http_err)
+    if use_adapter:
+        slog.debug("Using new LLM adapter", bfa_host_configured=True)
+        return llm_adapter.send_request(payload, url, max_retries)
 
-    except requests.exceptions.ConnectionError as conn_err:
-        print(f"[DEBUG] AI Service Connection Error: {conn_err}")
-        print("[DEBUG] This suggests the AI service is not reachable")
-        return None, f"Connection failed: {str(conn_err)}"
+    # Legacy direct connection (original implementation)
+    slog.debug("Using legacy direct AI service connection",
+               url=url,
+               payload_size=len(str(payload)),
+               timeout=120,
+               max_retries=max_retries)
 
-    except requests.exceptions.Timeout as timeout_err:
-        print(f"[DEBUG] AI Service Timeout Error: {timeout_err}")
-        print("[DEBUG] AI service took longer than 120 seconds to respond")
-        return None, f"Timeout after 120s: {str(timeout_err)}"
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                # Exponential backoff: 2s, 4s, 8s
+                wait_time = 2 ** attempt
+                slog.debug("Retry attempt", attempt=f"{attempt + 1}/{max_retries}", wait_time_s=wait_time)
+                time.sleep(wait_time)
 
-    except requests.exceptions.RequestException as req_err:
-        print(f"[DEBUG] AI Service Request Error: {req_err}")
-        print(f"[DEBUG] Error type: {type(req_err).__name__}")
-        return None, str(req_err)
+            slog.debug("Sending POST request to AI service", attempt=f"{attempt + 1}/{max_retries}")
+            resp = requests.post(url, json=payload, timeout=120)
+            slog.debug("AI Service response", status_code=resp.status_code, content_length=len(resp.content))
 
-    except Exception as err:
-        print(f"[DEBUG] AI Service Unexpected Error: {err}")
-        print(f"[DEBUG] Error type: {type(err).__name__}")
-        return False, str(err)
+            # Raise an error for bad responses (4xx and 5xx)
+            resp.raise_for_status()
+
+            response_json = resp.json()
+            slog.debug("AI Service JSON parsed successfully")
+            return resp.status_code, response_json
+
+        except requests.exceptions.HTTPError as http_err:
+            slog.error("AI Service HTTP error",
+                       attempt=f"{attempt + 1}/{max_retries}",
+                       status_code=resp.status_code,
+                       error=str(http_err))
+
+            # Don't retry on 4xx client errors (except 429 rate limit)
+            if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                slog.debug("Client error, not retrying", status_code=resp.status_code)
+                return resp.status_code, str(http_err)
+
+            # Retry on 5xx server errors and 429 rate limit
+            if attempt == max_retries - 1:
+                return resp.status_code, str(http_err)
+
+        except requests.exceptions.ConnectionError as conn_err:
+            slog.error("AI Service connection error", attempt=f"{attempt + 1}/{max_retries}", error=str(conn_err))
+            if attempt == max_retries - 1:
+                slog.error("All attempts failed - AI service not reachable", max_retries=max_retries)
+                return None, f"Connection failed after {max_retries} attempts: {str(conn_err)}"
+
+        except requests.exceptions.Timeout as timeout_err:
+            slog.error("AI Service timeout", attempt=f"{attempt + 1}/{max_retries}", error=str(timeout_err))
+            if attempt == max_retries - 1:
+                slog.error("All attempts timed out", max_retries=max_retries)
+                return None, f"Timeout after {max_retries} attempts: {str(timeout_err)}"
+
+        except requests.exceptions.RequestException as req_err:
+            slog.error("AI Service request error",
+                       attempt=f"{attempt + 1}/{max_retries}",
+                       error=str(req_err),
+                       error_type=type(req_err).__name__)
+            if attempt == max_retries - 1:
+                return None, str(req_err)
+
+        except Exception as err:
+            slog.error("AI Service unexpected error",
+                       attempt=f"{attempt + 1}/{max_retries}",
+                       error=str(err),
+                       error_type=type(err).__name__)
+            if attempt == max_retries - 1:
+                return None, str(err)
+
+    # Should not reach here, but just in case
+    return None, f"Failed after {max_retries} attempts"
 
 
 def generate_summary(file_path):
@@ -82,13 +173,18 @@ def generate_summary(file_path):
     print_banner("Summary of the Merge Request")
     if status_code != 200:
         print(f"Failed to generate summary: {code_summary}")
+        return False, code_summary
     else:
-        content = code_summary.get('content')[0]
-        content_type = content.get('type')
-        content_body = content.get(content_type)
-        print(content_body)
-        print("\n")
-    return True, None
+        try:
+            content = code_summary.get('content')[0]
+            content_type = content.get('type')
+            content_body = content.get(content_type)
+            print(content_body)
+            print("\n")
+            return True, content_body
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"Failed to parse AI response: {e}")
+            return False, str(e)
 
 def generate_initial_code_review(file_path):
     with open(file_path, 'r') as file:
@@ -109,14 +205,19 @@ def generate_initial_code_review(file_path):
     print_banner("Initial Review")
     status_code, initial_review = send_request(payload1)
     if status_code != 200:
-        print(f"Failed to generate summary: {initial_review}")
+        print(f"Failed to generate code review: {initial_review}")
+        return False, initial_review
     else:
-        content = initial_review.get('content')[0]
-        content_type = content.get('type')
-        content_body = content.get(content_type)
-        print(content_body)
-        print("\n")
-    return True, None
+        try:
+            content = initial_review.get('content')[0]
+            content_type = content.get('type')
+            content_body = content.get(content_type)
+            print(content_body)
+            print("\n")
+            return True, content_body
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"Failed to parse AI response: {e}")
+            return False, str(e)
 
 def generate_lint_disable_report(file_path):
     try:
@@ -258,17 +359,38 @@ def cal_ss(file_path):
 
 
 def cal_rating(net_loc, lint_disable_count):
-    """Simple rating calculation function for GitLab integration"""
+    """
+    Simple rating calculation function for GitLab integration.
+
+    This is a lightweight version used for real-time MR validation.
+    For more comprehensive analysis including cyclomatic complexity and
+    security scanning, see CalRating class in cal_rating.py (currently
+    not used in GitLab webhook mode due to execution time constraints).
+
+    Args:
+        net_loc: Net lines of code change (added - removed)
+        lint_disable_count: Number of new lint disable statements
+
+    Returns:
+        int: Rating score from 0 to 5
+
+    Scoring:
+        - Start with 5 points (perfect score)
+        - Deduct 1 point if net LOC > 500 (too large)
+        - Deduct 1 point if lint_disable_count > 0 (code smell)
+        - Minimum score: 0
+        - Score < 3: MR should be blocked for review
+    """
     score = 5  # Start with perfect score
-    
+
     # Deduct for high LOC
     if net_loc > 500:
         score -= 1
-        
+
     # Deduct for lint disables
     if lint_disable_count > 0:
         score -= 1
-        
+
     return max(score, 0)  # Don't go below 0
 
 def main():

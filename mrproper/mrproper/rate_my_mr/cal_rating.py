@@ -1,3 +1,17 @@
+"""
+Comprehensive rating calculation for MR quality assessment.
+
+NOTE: This CalRating class provides a more detailed rating system that includes
+cyclomatic complexity and security scanning, but is NOT currently used in the
+GitLab webhook integration (rate_my_mr_gitlab.py).
+
+The webhook mode uses a simpler, faster cal_rating() function from rate_my_mr.py
+to provide real-time feedback without the overhead of running Bandit security scans
+and cyclomatic complexity analysis.
+
+Future Enhancement: Consider integrating this comprehensive rating system if
+execution time is acceptable for your workflow.
+"""
 from .utils import print_banner
 from prettytable import PrettyTable
 from .params import RMMWeights, RMMLimits
