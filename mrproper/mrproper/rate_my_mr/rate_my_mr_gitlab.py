@@ -71,7 +71,8 @@ configure_child_loggers()
 from .. import gitlab  # Import from parent directory (common module)
 from .rate_my_mr import (
     generate_summary, generate_initial_code_review,
-    generate_lint_disable_report, cal_rating, print_banner
+    generate_lint_disable_report, cal_rating, print_banner,
+    cal_cc, cal_ss
 )
 from .loc import LOCCalculator
 
@@ -158,7 +159,7 @@ def create_diff_from_mr(proj, mriid, checkout_dir, mr_data, mrcommits):
             return None
 
 
-def format_rating_report(summary_success, summary_content, review_success, review_content, loc_data, lint_data, rating_score):
+def format_rating_report(summary_success, summary_content, review_success, review_content, loc_data, lint_data, cc_data, ss_data, rating_score):
     """
     Format the complete rating report for GitLab discussion
 
@@ -169,6 +170,8 @@ def format_rating_report(summary_success, summary_content, review_success, revie
         review_content: AI-generated code review text
         loc_data: LOC analysis results
         lint_data: Lint disable analysis results
+        cc_data: Cyclomatic complexity analysis results
+        ss_data: Security scan analysis results
         rating_score: Final quality rating
 
     Returns:
@@ -220,12 +223,74 @@ def format_rating_report(summary_success, summary_content, review_success, revie
 
 """
 
+    # Cyclomatic Complexity section
+    report += """#### :cyclone: Cyclomatic Complexity Analysis
+"""
+    if cc_data and isinstance(cc_data, dict):
+        avg_cc = cc_data.get('avg_cc', 0)
+        method_cc = cc_data.get('method_wise_cc', {})
+        cc_status = "Good" if avg_cc <= 10 else "⚠️ High complexity"
+        report += f"- **Average Complexity**: {avg_cc} ({cc_status})\n"
+        if method_cc:
+            report += f"- **Methods Analyzed**: {len(method_cc)}\n"
+            # Show high complexity methods
+            high_cc_methods = {k: v for k, v in method_cc.items() if v > 10}
+            if high_cc_methods:
+                report += f"- **High Complexity Methods** (CC > 10):\n"
+                for method, cc in sorted(high_cc_methods.items(), key=lambda x: x[1], reverse=True)[:5]:
+                    report += f"  - `{method}`: {cc}\n"
+        report += "\n"
+    else:
+        report += "- **Status**: Analysis not performed or failed\n\n"
+
+    # Security Scan section
+    report += """#### :shield: Security Scan Analysis
+"""
+    if ss_data and isinstance(ss_data, dict):
+        severity_count = ss_data.get('severity_count', {})
+        avg_score = ss_data.get('avg_security_scan_value', 0)
+        high_issues = severity_count.get('HIGH', 0)
+        medium_issues = severity_count.get('MEDIUM', 0)
+        low_issues = severity_count.get('LOW', 0)
+
+        if high_issues > 0:
+            report += f"- :red_circle: **HIGH Severity Issues**: {high_issues}\n"
+        else:
+            report += f"- :green_circle: **HIGH Severity Issues**: {high_issues}\n"
+
+        if medium_issues > 0:
+            report += f"- :orange_circle: **MEDIUM Severity Issues**: {medium_issues}\n"
+        else:
+            report += f"- :green_circle: **MEDIUM Severity Issues**: {medium_issues}\n"
+
+        report += f"- :yellow_circle: **LOW Severity Issues**: {low_issues}\n"
+        report += f"- **Security Score**: {avg_score:.4f} issues/LOC\n"
+
+        # Show specific security issues if any
+        security_report = ss_data.get('security_report', {})
+        results = security_report.get('results', [])
+        if results:
+            report += "\n<details>\n<summary>Click to expand Security Issues</summary>\n\n"
+            for issue in results[:10]:  # Limit to 10 issues
+                report += f"- **{issue.get('issue_severity', 'UNKNOWN')}** - {issue.get('issue_text', 'Unknown issue')}\n"
+                report += f"  - Test: `{issue.get('test_name', 'unknown')}`\n"
+                report += f"  - Line: {issue.get('line_number', 'N/A')}\n"
+                if issue.get('more_info'):
+                    report += f"  - [More Info]({issue.get('more_info')})\n"
+                report += "\n"
+            report += "</details>\n"
+        report += "\n"
+    else:
+        report += "- **Status**: Analysis not performed or failed\n\n"
+
     # Rating breakdown
     report += f"""### Scoring Breakdown
 | Metric | Status | Impact |
 |--------|--------|--------|
 | Lines of Code | {loc_data.get('net_lines_of_code_change', 0)} lines | {'Within limits' if loc_data.get('net_lines_of_code_change', 0) <= 500 else '⚠️ Exceeds 500 line limit'} |
 | Lint Disables | {lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0} new disables | {'No new disables' if (isinstance(lint_data, dict) and lint_data.get('num_lint_disable', 0) == 0) else '⚠️ New lint suppressions added'} |
+| Cyclomatic Complexity | Avg: {cc_data.get('avg_cc', 'N/A') if isinstance(cc_data, dict) else 'N/A'} | {'Good' if isinstance(cc_data, dict) and cc_data.get('avg_cc', 0) <= 10 else '⚠️ High complexity'} |
+| Security Issues | {(ss_data.get('severity_count', {}).get('HIGH', 0) + ss_data.get('severity_count', {}).get('MEDIUM', 0)) if isinstance(ss_data, dict) else 0} HIGH/MEDIUM | {'No critical issues' if isinstance(ss_data, dict) and ss_data.get('severity_count', {}).get('HIGH', 0) == 0 else '⚠️ Security concerns'} |
 
 **Final Score**: {rating_score}/5 points
 
@@ -471,8 +536,42 @@ Please check the MR manually and retry if necessary.
                       num_disables=lint_data.get('num_lint_disable', 0),
                       disabled_lints=lint_data.get('lints_that_disabled', ''))
 
-        # 5. Calculate overall rating
-        slog.debug("Step 5: Calculating overall rating")
+        # 5. Calculate cyclomatic complexity
+        slog.debug("Step 5: Calculating cyclomatic complexity")
+        print_banner(f"[{REQUEST_ID_SHORT}] Cyclomatic Complexity Analysis")
+        try:
+            cc_data = cal_cc(diff_file_path)
+            if cc_data:
+                slog.info("Cyclomatic complexity analysis completed",
+                          avg_cc=cc_data.get('avg_cc', 0),
+                          methods_analyzed=len(cc_data.get('method_wise_cc', {})))
+            else:
+                slog.warning("Cyclomatic complexity analysis returned no data")
+                cc_data = {}
+        except Exception as cc_error:
+            slog.warning("Cyclomatic complexity analysis failed", error=str(cc_error))
+            cc_data = {}
+
+        # 6. Security scan
+        slog.debug("Step 6: Running security scan")
+        print_banner(f"[{REQUEST_ID_SHORT}] Security Scan Analysis")
+        try:
+            ss_data = cal_ss(diff_file_path)
+            if ss_data:
+                severity_count = ss_data.get('severity_count', {})
+                slog.info("Security scan completed",
+                          high=severity_count.get('HIGH', 0),
+                          medium=severity_count.get('MEDIUM', 0),
+                          low=severity_count.get('LOW', 0))
+            else:
+                slog.warning("Security scan returned no data")
+                ss_data = {}
+        except Exception as ss_error:
+            slog.warning("Security scan failed", error=str(ss_error))
+            ss_data = {}
+
+        # 7. Calculate overall rating
+        slog.debug("Step 7: Calculating overall rating")
         rating_score = cal_rating(
             loc_data.get('net_lines_of_code_change', 0),
             lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0
@@ -481,14 +580,14 @@ Please check the MR manually and retry if necessary.
         print_banner(f"[{REQUEST_ID_SHORT}] Final Rating: {rating_score}/5")
 
     # Format report for GitLab
-    slog.debug("Step 6: Formatting report for GitLab")
+    slog.debug("Step 8: Formatting report for GitLab")
     report_body, must_not_be_resolved = format_rating_report(
-        summary_success, summary_content, review_success, review_content, loc_data, lint_data, rating_score
+        summary_success, summary_content, review_success, review_content, loc_data, lint_data, cc_data, ss_data, rating_score
     )
     slog.debug("Report formatted", must_not_be_resolved=must_not_be_resolved)
 
     # Post results to GitLab
-    slog.debug("Step 7: Posting results to GitLab")
+    slog.debug("Step 9: Posting results to GitLab")
     try:
         gitlab.update_discussion(proj, mriid, HEADER, report_body, must_not_be_resolved)
         slog.info("Report posted to GitLab successfully")
