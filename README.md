@@ -1,699 +1,439 @@
-# MR Validator - Automated GitLab Merge Request Validation
+# MR Validator - GitLab Merge Request Quality Assessment
 
-A comprehensive merge request validation system that automatically checks code formatting, commit message standards, and performs AI-powered quality assessment for GitLab projects using webhook-triggered Docker containers.
+Automated MR validation with AI-powered code review, security scanning, and quality metrics.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
-- [System Overview](#system-overview)
-- [Installation & Setup](#installation--setup)
+  - [Prerequisites](#prerequisites)
+  - [Build & Install](#build--install)
+  - [Configure](#configure)
+  - [Run](#run)
+  - [Configure GitLab Webhook](#configure-gitlab-webhook)
 - [Configuration](#configuration)
+  - [Environment Variables](#environment-variables-envexample)
+  - [Repository Configuration](#repository-configuration-rate-my-mryaml)
+  - [Webhook URL Patterns](#webhook-url-patterns)
 - [Validators](#validators)
-- [Logging](#logging)
+  - [AI Quality Assessment](#ai-quality-assessment-rate-my-mr)
+  - [Code Formatting](#code-formatting-mrproper-clang-format)
+  - [Commit Message](#commit-message-mrproper-message)
 - [Troubleshooting](#troubleshooting)
+  - [Quick Diagnostics](#quick-diagnostics)
+  - [Common Issues](#common-issues)
+  - [Debug by REQUEST_ID](#debug-by-request_id)
+  - [Log Module Names](#log-module-names)
 - [Documentation](#documentation)
+- [License](#license)
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
+- Docker 20.10+
+- GitLab Access Token (API scope)
+- Python 3.8+ (for local development)
 
-- **Docker** and Docker CLI installed
-- **GitLab Access Token** with API permissions
-- **Python 3.8+** environment
-- Network access to GitLab instance
-
-### 1. Build Docker Images
+### Build & Install
 
 ```bash
+# Build Docker images
 ./build-docker-images
 ```
 
-**Expected Output**:
+**Expected output:**
 ```
 Building mrproper-webhook-vp-test...
-Step 1/8 : FROM python:3.9-alpine
- ---> abc123...
-...
-Successfully built abc123def456
 Successfully tagged mrproper-webhook-vp-test:latest
-
 Building mr-checker-vp-test...
-Step 1/12 : FROM ubuntu:22.04
- ---> def456...
-...
-Successfully built def456ghi789
 Successfully tagged mr-checker-vp-test:latest
-
-✅ Build complete: 2 images created
 ```
 
-### 2. Configure Environment
+### Configure
 
-Create `mrproper.env` with your GitLab token:
-
+Create `mrproper.env`:
 ```bash
-cat > mrproper.env <<EOF
+# Required
 GITLAB_ACCESS_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
-EOF
-```
 
-**Optional Configuration**:
-```bash
-# For custom AI service
-AI_SERVICE_URL=http://custom-ai-server:8080/generate
-
-# For new LLM adapter with JWT authentication
+# AI Service (BFA mode - recommended)
 BFA_HOST=api-gateway.internal.com
 API_TIMEOUT=120
-BFA_TOKEN_KEY=eyJhbGci...  # Optional: pre-configured token
 
-# Logging configuration
+# Logging
 LOG_DIR=/home/docker/tmp/mr-validator-logs
 LOG_LEVEL=INFO
 LOG_STRUCTURE=organized
 ```
 
-### 3. Start Server
+### Run
 
 ```bash
 ./start-server
 ```
 
-**Expected Output**:
+**Expected output:**
 ```
-Starting MR Validator webhook server...
-Container ID: abc123def456...
-Server listening on port 9912
-✅ Webhook server started successfully
-
-Test endpoint:
-curl http://localhost:9912/mr-proper/rate-my-mr
+Starting webhook server on port 9912...
+Server ready: http://0.0.0.0:9912
 ```
 
-### 4. Configure GitLab Webhook
+### Configure GitLab Webhook
 
-**GitLab Project → Settings → Webhooks**
+**Settings > Webhooks:**
+- URL: `http://your-server:9912/mr-proper/rate-my-mr`
+- Trigger: Merge request events
 
-| Field | Value |
-|-------|-------|
-| **URL** | `http://your-server:9912/mr-proper/rate-my-mr` |
-| **Secret Token** | Leave empty |
-| **Trigger** | ☑ Merge request events |
-| **SSL** | ☑ Enable SSL verification (if using HTTPS) |
-
-**For multiple validators**:
-```
-http://your-server:9912/mr-proper/mrproper-clang-format+mrproper-message+rate-my-mr
-```
-
-**Test the webhook**:
+**Test:**
 ```bash
-curl -X POST http://your-server:9912/mr-proper/rate-my-mr \
+curl -X POST http://localhost:9912/mr-proper/rate-my-mr \
   -H "Content-Type: application/json" \
-  -d '{
-    "object_kind": "merge_request",
-    "project": {"path_with_namespace": "test/project"},
-    "object_attributes": {"iid": 1, "title": "Test MR"},
-    "user": {"username": "testuser"}
-  }'
+  -d '{"object_kind":"merge_request","project":{"path_with_namespace":"org/repo"},"object_attributes":{"iid":1}}'
 ```
-
-**Expected Response**:
-```
-OK!
-```
-
----
-
-## System Overview
-
-The MR Validator is a webhook-driven validation system with two main components:
-
-```mermaid
-flowchart TB
-    A[GitLab MR Event] -->|Webhook POST| B[Webhook Server<br/>Port 9912]
-    B -->|Spawn| C1[Docker Container<br/>mrproper-clang-format]
-    B -->|Spawn| C2[Docker Container<br/>mrproper-message]
-    B -->|Spawn| C3[Docker Container<br/>rate-my-mr]
-    C1 -->|GitLab API| D[Update MR Discussion]
-    C2 -->|GitLab API| D
-    C3 -->|AI Service| E[LLM Analysis]
-    E -->|Results| C3
-    C3 -->|GitLab API| D
-    D -->|Notification| F[Developer]
-```
-
-### How It Works
-
-1. **GitLab** sends webhook event when MR is created/updated
-2. **Webhook Server** (Tornado) receives event and validates parameters
-3. **Docker Containers** spawn for each requested validator
-4. **Validators** analyze code, commits, and quality metrics
-5. **Results** posted as GitLab MR discussions
-6. **Developers** receive notifications and can address issues
-
-### Key Features
-
-- ✅ **Parallel Validation** - Multiple validators run concurrently
-- ✅ **Container Isolation** - Each validation in separate Docker container
-- ✅ **Auto-Resolution** - Discussions auto-resolve when issues fixed
-- ✅ **Request Tracing** - Unique REQUEST_ID for end-to-end correlation
-- ✅ **Structured Logging** - Pipe-separated, millisecond-precision logs
-- ✅ **LLM Integration** - AI-powered code analysis with JWT authentication
-
----
-
-## Installation & Setup
-
-### Build Process
-
-The system consists of two Docker images:
-
-| Image | Base | Purpose | Size |
-|-------|------|---------|------|
-| `mrproper-webhook-vp-test` | Alpine Python 3.9 | Webhook HTTP server | ~150MB |
-| `mr-checker-vp-test` | Ubuntu 22.04 | Validation execution | ~1.2GB |
-
-#### Build Commands
-
-```bash
-# Build both images
-./build-docker-images
-
-# Build individually
-docker build -t mrproper-webhook-vp-test -f webhook-server/Dockerfile .
-docker build -t mr-checker-vp-test -f mrproper/Dockerfile .
-```
-
-**Expected Output**:
-```
-=== Building Webhook Server Image ===
-[+] Building 45.2s (12/12) FINISHED
- => [internal] load build definition                0.1s
- => => transferring dockerfile: 890B                0.0s
- ...
- => exporting to image                              2.3s
- => => naming to docker.io/library/mrproper-webhook-vp-test:latest
-
-=== Building Validator Image ===
-[+] Building 120.5s (18/18) FINISHED
- => [internal] load build definition                0.1s
- ...
- => exporting to image                              5.8s
- => => naming to docker.io/library/mr-checker-vp-test:latest
-
-✅ Build complete
-```
-
-#### Verify Images
-
-```bash
-docker images | grep -E "mrproper|mr-checker"
-```
-
-**Expected Output**:
-```
-mr-checker-vp-test          latest    def456    2 minutes ago   1.2GB
-mrproper-webhook-vp-test    latest    abc123    5 minutes ago   152MB
-```
-
-### Dependencies
-
-Python package dependencies are automatically installed during Docker build.
-
-**Core Dependencies** (`mrproper/requirements.txt`):
-```
-requests>=2.28.0        # HTTP client for API calls
-prettytable>=3.0.0      # Table formatting for reports
-bandit>=1.7.0           # Security vulnerability scanning
-radon>=5.1.0            # Code complexity analysis
-tornado>=6.1            # Webhook server framework
-```
-
-**Install locally for development**:
-```bash
-cd mrproper
-pip install -r requirements.txt
-```
-
-**Expected Output**:
-```
-Collecting requests>=2.28.0
-  Downloading requests-2.31.0-py3-none-any.whl (62 kB)
-Collecting prettytable>=3.0.0
-  Downloading prettytable-3.10.0-py3-none-any.whl (27 kB)
-...
-Successfully installed bandit-1.7.5 prettytable-3.10.0 radon-6.0.1 requests-2.31.0 tornado-6.4
-```
-
-### Directory Structure
-
-```
-commit-validator/
-├── webhook-server/                          # Webhook HTTP server
-│   ├── server.py                            # Tornado webhook handler
-│   └── Dockerfile                           # Alpine-based webhook image
-│
-├── mrproper/                                # Validation library
-│   ├── bin/                                 # CLI entry points
-│   │   ├── mrproper-clang-format            # Formatting validator
-│   │   ├── mrproper-message                 # Message validator
-│   │   └── rate-my-mr                       # AI quality validator
-│   │
-│   ├── mrproper/                            # Python modules
-│   │   ├── __init__.py
-│   │   ├── gitlab.py                        # GitLab API client
-│   │   ├── git_format.py                    # Clang-format logic
-│   │   ├── message.py                       # Message validation
-│   │   │
-│   │   └── rate_my_mr/                      # AI validator package
-│   │       ├── __init__.py
-│   │       ├── rate_my_mr_gitlab.py         # Main entry point
-│   │       ├── rate_my_mr.py                # AI integration
-│   │       ├── llm_adapter.py               # LLM JWT adapter
-│   │       ├── loc.py                       # LOC analysis
-│   │       ├── cal_rating.py                # Rating calculation
-│   │       ├── cyclomatic_complexity.py     # Complexity analysis
-│   │       ├── security_scan.py             # Security scanning
-│   │       ├── params.py                    # Configuration
-│   │       ├── utils.py                     # Utilities
-│   │       └── logging_config.py            # Structured logging
-│   │
-│   ├── requirements.txt                     # Python dependencies
-│   ├── setup.py                             # Package configuration
-│   └── Dockerfile                           # Ubuntu-based validator image
-│
-├── mrproper.env                             # Environment configuration
-├── build-docker-images                      # Build script
-├── start-server                             # Server startup script
-│
-├── README.md                                # This file
-├── ARCHITECTURE.md                          # Technical architecture
-├── DEBUGGING_GUIDE.md                       # Troubleshooting guide
-├── LLM_ADAPTER_IMPLEMENTATION.md            # LLM adapter details
-├── COMPREHENSIVE_TEST_PLAN.md               # Testing procedures
-└── LOGGING_CONFIGURATION.md                 # Logging setup guide
-```
-
-### Automated CI/CD Deployment
-
-The system supports automated deployment via GitLab CI/CD.
-
-**GitLab CI Variables** (Project Settings → CI/CD → Variables):
-
-| Variable | Value | Protected | Masked | Description |
-|----------|-------|-----------|--------|-------------|
-| `GITLAB_ACCESS_TOKEN` | `glpat-xxx...` | ✓ | ✓ | GitLab API token |
-| `LDOCKER_SSH_KEY` | `<base64-ssh-key>` | ✓ | ✗ | SSH private key for deployment |
-| `AI_SERVICE_URL` | `http://10.31.88.29:6006/generate` | ✗ | ✗ | AI service endpoint |
-| `BFA_HOST` | `api-gateway.internal.com` | ✗ | ✗ | LLM adapter host (optional) |
-
-**CI Pipeline Flow**:
-
-```mermaid
-flowchart LR
-    A[Git Push] --> B[Build Images]
-    B --> C[SSH to Server]
-    C --> D[Create mrproper.env]
-    D --> E[Deploy Containers]
-    E --> F[Verify Deployment]
-```
-
-**Deployment Steps**:
-1. CI builds Docker images
-2. Connects to target server via SSH
-3. Creates `mrproper.env` from CI variables
-4. Deploys webhook server container
-5. Verifies deployment success
 
 ---
 
 ## Configuration
 
-### Environment Variables
-
-All configuration via `mrproper.env` file or environment variables.
-
-#### Core Configuration
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GITLAB_ACCESS_TOKEN` | ✓ | - | GitLab API token (glpat-...) |
-| `AI_SERVICE_URL` | ✗ | `http://10.31.88.29:6006/generate` | Legacy AI service URL |
-
-#### LLM Adapter Configuration (New)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `BFA_HOST` | ✗ | - | LLM adapter host (enables new adapter) |
-| `API_TIMEOUT` | ✗ | `120` | API timeout in seconds |
-| `BFA_TOKEN_KEY` | ✗ | - | Pre-configured JWT token |
-
-#### Logging Configuration
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `LOG_DIR` | ✗ | `/home/docker/tmp/mr-validator-logs` | Base log directory |
-| `LOG_LEVEL` | ✗ | `DEBUG` | Logging level (DEBUG/INFO/WARNING/ERROR) |
-| `LOG_MAX_BYTES` | ✗ | `52428800` | Max log file size (50MB) |
-| `LOG_BACKUP_COUNT` | ✗ | `3` | Number of backup files |
-| `LOG_STRUCTURE` | ✗ | `organized` | Log structure (organized/flat) |
-
-### Configuration Examples
-
-#### Basic Configuration (Legacy AI Service)
+### Environment Variables (.env.example)
 
 ```bash
-# mrproper.env
-GITLAB_ACCESS_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
-AI_SERVICE_URL=http://10.31.88.29:6006/generate
-```
-
-#### Advanced Configuration (New LLM Adapter)
-
-```bash
-# mrproper.env
+# =============================================================================
+# Required
+# =============================================================================
 GITLAB_ACCESS_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
 
-# New LLM adapter with JWT authentication
+# =============================================================================
+# AI/LLM Service
+# =============================================================================
+# BFA Mode (recommended) - JWT authenticated
 BFA_HOST=api-gateway.internal.com
 API_TIMEOUT=120
-BFA_TOKEN_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+# BFA_TOKEN_KEY=eyJhbGci...  # Optional: pre-configured token
 
-# Structured logging
-LOG_DIR=/mnt/nfs/mr-validator-logs
-LOG_LEVEL=INFO
-LOG_STRUCTURE=organized
-LOG_MAX_BYTES=104857600  # 100MB
-LOG_BACKUP_COUNT=5
+# Legacy Mode (fallback if BFA_HOST not set)
+# AI_SERVICE_URL=http://10.31.88.29:6006/generate
+
+# =============================================================================
+# Logging
+# =============================================================================
+LOG_DIR=/home/docker/tmp/mr-validator-logs
+LOG_LEVEL=DEBUG                    # DEBUG, INFO, WARNING, ERROR
+LOG_MAX_BYTES=52428800             # 50MB per file
+LOG_BACKUP_COUNT=3                 # Rotated files to keep
+LOG_STRUCTURE=organized            # organized or flat
 ```
 
-#### Production Configuration with NFS Logs
+<details>
+<summary><b>Click to expand: Complete Environment Variable Reference</b></summary>
 
+#### Required Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `GITLAB_ACCESS_TOKEN` | GitLab personal access token with API scope | `glpat-xxxxxxxxxxxxxxxxxxxx` |
+
+#### AI/LLM Service Variables
+
+| Variable | Required | Description | Default | Example |
+|----------|----------|-------------|---------|---------|
+| `BFA_HOST` | Yes (for BFA mode) | BFA service hostname | None | `api-gateway.internal.com` |
+| `API_TIMEOUT` | No | API call timeout in seconds | `120` | `180` |
+| `BFA_TOKEN_KEY` | No | Pre-configured JWT token (skips token API) | None | `eyJhbGciOiJIUzI1...` |
+| `AI_SERVICE_URL` | No (legacy) | Direct AI service URL | None | `http://10.31.88.29:6006/generate` |
+
+#### Logging Variables
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `LOG_DIR` | Base directory for all logs | `/home/docker/tmp/mr-validator-logs` | `/mnt/nfs/logs` |
+| `LOG_LEVEL` | Logging verbosity | `DEBUG` | `INFO`, `WARNING`, `ERROR` |
+| `LOG_MAX_BYTES` | Max size per log file before rotation | `52428800` (50MB) | `104857600` (100MB) |
+| `LOG_BACKUP_COUNT` | Number of rotated log files to keep | `3` | `5` |
+| `LOG_STRUCTURE` | Directory organization style | `organized` | `flat` |
+
+#### Auto-Set Variables (by system)
+
+| Variable | Description | Set By |
+|----------|-------------|--------|
+| `PROJECT_ID` | GitLab project path (URL encoded) | `rate_my_mr_gitlab.py` |
+| `MR_IID` | Merge request internal ID | `rate_my_mr_gitlab.py` |
+| `REQUEST_ID` | Unique request identifier | Webhook server |
+| `MR_REPO` | Repository name | `rate_my_mr_gitlab.py` |
+| `MR_BRANCH` | Source branch name | `rate_my_mr_gitlab.py` |
+| `MR_AUTHOR` | MR author email | `rate_my_mr_gitlab.py` |
+| `MR_COMMIT` | Latest commit SHA | `rate_my_mr_gitlab.py` |
+| `MR_URL` | Full MR URL | `rate_my_mr_gitlab.py` |
+
+#### Production Configuration Examples
+
+**High-traffic production:**
 ```bash
-# mrproper.env
-GITLAB_ACCESS_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
-BFA_HOST=api-gateway.internal.com
-
-# NFS-mounted persistent logs
-LOG_DIR=/mnt/nfs/mr-validator-logs
 LOG_LEVEL=INFO
+LOG_MAX_BYTES=104857600    # 100MB
+LOG_BACKUP_COUNT=5
 LOG_STRUCTURE=organized
 ```
 
-### LLM Integration Modes
-
-The system automatically detects which AI integration to use:
-
-```mermaid
-flowchart TD
-    A[Rate-My-MR Starts] --> B{BFA_HOST<br/>configured?}
-    B -->|Yes| C[LLM Adapter<br/>JWT Authentication]
-    B -->|No| D[Legacy Direct<br/>No Authentication]
-    C --> E[api-gateway.internal.com:8000<br/>Token: JWT]
-    D --> F[10.31.88.29:6006<br/>Token: None]
-    E --> G[LLM Service]
-    F --> G
+**Development/debugging:**
+```bash
+LOG_LEVEL=DEBUG
+LOG_MAX_BYTES=52428800     # 50MB
+LOG_BACKUP_COUNT=3
+LOG_STRUCTURE=organized
 ```
 
-**Mode 1: Legacy Direct Connection** (default when `BFA_HOST` not set):
-- Direct connection to AI service
-- No authentication required
-- URL: `http://10.31.88.29:6006/generate`
-
-**Mode 2: LLM Adapter with JWT** (enabled when `BFA_HOST` set):
-- Routes through BFA intermediary service
-- JWT token authentication
-- Token acquired once, reused for all AI calls
-- Automatic retry with exponential backoff
-- URL: `http://{BFA_HOST}:8000/api/rate-my-mr`
-
-**See**: [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md) for complete details
-
-### Project-Specific Configuration
-
-Optional `.mr-proper.conf` in project repository root:
-
-```ini
-[message]
-# Valid commit tags
-valid_tags = BUG,FEATURE,IMPROVEMENT,REFACTOR,HOTFIX
-
-# Tags that don't require ticket numbers
-valid_tags_without_ticket = IMPROVEMENT,REFACTOR
+**Disk space constrained:**
+```bash
+LOG_LEVEL=WARNING
+LOG_MAX_BYTES=10485760     # 10MB
+LOG_BACKUP_COUNT=1
+LOG_STRUCTURE=flat
 ```
+
+</details>
+
+### Repository Configuration (.rate-my-mr.yaml)
+
+Place in repository root to customize per-project:
+
+```yaml
+# Feature toggles
+features:
+  ai_summary: true
+  ai_code_review: true
+  loc_analysis: true
+  lint_disable_check: true
+  cyclomatic_complexity: true
+  security_scan: true
+
+# Thresholds
+loc:
+  max_lines: 500
+
+cyclomatic_complexity:
+  max_average: 10
+
+security:
+  fail_on_high: true
+  ignored_tests: []  # e.g., ['B101', 'B311']
+
+lint:
+  max_new_disables: 10
+
+rating:
+  pass_score: 3
+```
+
+**Example: Disable AI features for faster validation:**
+```yaml
+features:
+  ai_summary: false
+  ai_code_review: false
+```
+
+**Example: Strict security policy:**
+```yaml
+security:
+  fail_on_high: true
+  fail_on_medium: true
+```
+
+<details>
+<summary><b>Click to expand: Complete .rate-my-mr.yaml Configuration Reference</b></summary>
+
+```yaml
+# =============================================================================
+# Rate My MR - Full Configuration Reference
+# =============================================================================
+
+# Feature toggles - enable/disable specific analysis types
+features:
+  ai_summary: true            # AI-generated MR summary
+  ai_code_review: true        # AI-powered code review feedback
+  loc_analysis: true          # Lines of Code change analysis
+  lint_disable_check: true    # Check for new lint disable statements
+  cyclomatic_complexity: true # Code complexity analysis
+  security_scan: true         # Bandit security vulnerability scan
+
+# Lines of Code thresholds
+loc:
+  max_lines: 500              # Maximum allowed net lines changed
+  warning_threshold: 300      # Threshold for warning
+
+# Cyclomatic Complexity settings
+cyclomatic_complexity:
+  max_average: 10             # Maximum average complexity score
+  max_per_method: 15          # Maximum complexity per method
+  show_top_n_methods: 5       # Number of high-complexity methods to show
+
+# Security scan settings
+security:
+  fail_on_high: true          # Block MR on HIGH severity issues
+  fail_on_medium: false       # Block MR on MEDIUM severity issues
+  max_issues_per_loc: 0.05    # Max security issues per line of code (5%)
+  ignored_tests: []           # Bandit test IDs to ignore (e.g., ['B101', 'B311'])
+  show_max_issues: 10         # Maximum issues to display in report
+
+# Lint disable settings
+lint:
+  allowed_disables: []        # Allowed lint disable patterns
+  max_new_disables: 10        # Maximum new lint disables allowed
+
+# Rating calculation settings
+rating:
+  pass_score: 3               # Minimum score to pass (out of 5)
+  deduct_for_high_loc: true   # Deduct points for exceeding LOC limit
+  deduct_for_lint_disables: true  # Deduct points for lint disables
+
+# Report customization
+report:
+  show_ai_content: true       # Show AI summary/review in collapsible sections
+  show_security_details: true # Show detailed security issue information
+  show_cc_breakdown: true     # Show per-method complexity breakdown
+```
+
+#### Example Configurations
+
+**Minimal (disable AI for speed):**
+```yaml
+features:
+  ai_summary: false
+  ai_code_review: false
+loc:
+  max_lines: 1000
+```
+
+**Data Science Project (relaxed complexity):**
+```yaml
+loc:
+  max_lines: 2000
+cyclomatic_complexity:
+  max_average: 15
+security:
+  ignored_tests:
+    - B101  # assert used
+    - B311  # random not for crypto
+```
+
+**Legacy Codebase:**
+```yaml
+cyclomatic_complexity:
+  max_average: 20
+  max_per_method: 25
+lint:
+  max_new_disables: 50
+rating:
+  pass_score: 2
+```
+
+**Security-Critical Application:**
+```yaml
+security:
+  fail_on_high: true
+  fail_on_medium: true
+  show_max_issues: 20
+rating:
+  pass_score: 4
+```
+
+</details>
 
 ### Webhook URL Patterns
 
-| URL Pattern | Validators Executed |
-|-------------|---------------------|
-| `/mr-proper/mrproper-clang-format` | Code formatting only |
-| `/mr-proper/mrproper-message` | Commit message only |
-| `/mr-proper/rate-my-mr` | AI quality assessment only |
-| `/mr-proper/mrproper-clang-format+mrproper-message` | Formatting + Message |
-| `/mr-proper/mrproper-clang-format+mrproper-message+rate-my-mr` | All three validators |
+| URL | Validators |
+|-----|-----------|
+| `/mr-proper/rate-my-mr` | AI quality assessment |
+| `/mr-proper/mrproper-clang-format` | Code formatting |
+| `/mr-proper/mrproper-message` | Commit messages |
+| `/mr-proper/rate-my-mr+mrproper-message` | Multiple validators |
 
 ---
 
 ## Validators
 
-### 1. Code Formatting (`mrproper-clang-format`)
-
-Validates C/C++ code formatting using clang-format with organizational standards.
-
-**Features**:
-- Per-commit analysis
-- Automatic fix suggestions
-- Auto-resolves when issues fixed
-
-**Example Output**:
-```
-git format report
-===================================================
-
-✓ Commit abc123f: Added user authentication - formatting OK
-✗ Commit def456a: Updated database schema - contains formatting errors
-   • File: src/database.cpp
-   • Line: 42
-   • Use 'git format --fixup' to fix automatically
-
-git format instructions: https://wiki.internal.com/git-format
-WARNING: DO NOT RESOLVE MANUALLY - Will auto-resolve when fixed
-```
-
-**Test Manually**:
-```bash
-docker run --rm --env-file mrproper.env \
-  mr-checker-vp-test mrproper-clang-format \
-  vigneshpalanivelr%2Fcommit-validator 1
-```
-
-**Expected Output**:
-```
-Fetching MR data for project vigneshpalanivelr/commit-validator, MR #1...
-Analyzing 3 commits...
-  ✓ Commit 1/3: abc123f - formatting OK
-  ✓ Commit 2/3: def456a - formatting OK
-  ✓ Commit 3/3: ghi789b - formatting OK
-
-✅ All commits pass formatting checks
-Posting results to GitLab...
-Done!
-```
-
-### 2. Commit Message Validation (`mrproper-message`)
-
-Validates commit message format and standards.
-
-**Format**: `TAG(TICKET): Subject`
-
-**Validation Rules**:
-- Tag must be in valid_tags list
-- Subject must start with capital letter
-- Subject must not end with period
-- Reviewed-By trailers cross-referenced with GitLab approvals
-
-**Example Output**:
-```
-commit message check report
-=============================================
-
-| Commit | Status |
-|--------|--------|
-|abc123f<br>`BUG(PROJ-123): Fix login issue`|✓|
-|def456a<br>`FEATURE(PROJ-456): Add dark mode`|✓|
-|ghi789b<br>`Added new feature`|✗ Missing tag format|
-
-WARNING: 1 commit is missing `Reviewed-By` trailer
-Hint: Use `git gitlab-apply-reviewers`
-```
-
-**Test Manually**:
-```bash
-docker run --rm --env-file mrproper.env \
-  -e REQUEST_ID=test_$(date +%s)_12345678 \
-  mr-checker-vp-test mrproper-message \
-  vigneshpalanivelr%2Fcommit-validator 1
-```
-
-### 3. AI Quality Assessment (`rate-my-mr`)
-
-Comprehensive AI-powered code quality analysis.
-
-**Analysis Components**:
+### AI Quality Assessment (rate-my-mr)
 
 ```mermaid
 flowchart LR
-    A[Rate-My-MR] --> B[AI Summary]
-    A --> C[AI Code Review]
-    A --> D[LOC Analysis]
-    A --> E[Complexity]
-    A --> F[Security Scan]
-    A --> G[Lint Analysis]
-    B --> H[Rating Calculation]
-    C --> H
-    D --> H
-    E --> H
-    F --> H
-    G --> H
-    H --> I[1-5 Star Score]
+    A[▸ MR Diff<br/>git diff output] --> B[◎ AI Summary<br/>LLM generates<br/>brief overview]
+    A --> C[◎ Code Review<br/>LLM identifies<br/>issues & improvements]
+    A --> D[▤ LOC Analysis<br/>Lines added/removed<br/>Change size rating]
+    A --> E[⚙ Lint Check<br/>New disable statements<br/>Code quality flags]
+    A --> F[# Security Scan<br/>Bandit analysis<br/>Vulnerability detection]
+    A --> G[~ Complexity<br/>Cyclomatic score<br/>Method complexity]
+    B & C & D & E & F & G --> H[★ Rating 1-5<br/>Weighted score<br/>Pass/Fail decision]
+
+    classDef input fill:#d4e5f7,color:#333,stroke:#a8c8e8
+    classDef ai fill:#e1bee7,color:#333,stroke:#ce93d8
+    classDef metrics fill:#e3f2fd,color:#333,stroke:#b3d4f7
+    classDef security fill:#ffcdd2,color:#333,stroke:#ef9a9a
+    classDef output fill:#c8e6c9,color:#333,stroke:#a5d6a7
+
+    class A input
+    class B,C ai
+    class D,E,G metrics
+    class F security
+    class H output
 ```
 
-**Features**:
-- AI-powered code review (4 LLM calls)
-- Lines of code metrics
-- Cyclomatic complexity analysis
-- Security vulnerability scanning (Bandit)
-- Lint disable pattern detection
-- Overall quality rating (1-5 stars)
-
-**Example Output**:
-```
-:star2: MR Quality Rating Report :star2:
-========================================
-
-## Overall Rating: 4/5
-:star::star::star::star::white_circle:
-
-### Quality Assessment Results
-:white_check_mark: AI-powered summary generated successfully
-:white_check_mark: Comprehensive AI code review completed
-Lines Added: 156, Lines Removed: 23, Net Change: 133
-WARNING: New Lint Disables: 2
-
-### Scoring Breakdown
-| Metric | Status | Impact |
-|--------|--------|--------|
-| Lines of Code | 133 lines | Within limits |
-| Lint Disables | 2 new disables | WARNING: New lint suppressions |
-
-**Final Score**: 4/5 points
-:white_check_mark: Quality assessment passed - MR meets quality standards
-```
-
-**Test Manually**:
+**Test manually:**
 ```bash
 docker run --rm --env-file mrproper.env \
-  -e REQUEST_ID=test_$(date +%s)_87654321 \
-  -e PROJECT_ID=vigneshpalanivelr/commit-validator \
-  -e MR_IID=1 \
-  mr-checker-vp-test rate-my-mr \
-  vigneshpalanivelr%2Fcommit-validator 1
+  -e REQUEST_ID=test_$(date +%s)_12345678 \
+  -e PROJECT_ID=org/repo \
+  -e MR_IID=42 \
+  mr-checker-vp-test rate-my-mr org%2Frepo 42
 ```
 
-**Expected Output**:
+**Expected log output:**
 ```
-2025-11-09 10:15:23.456 | INFO     | rate_my_mr.gitlab              | 87654321 | Starting MR analysis | project=vigneshpalanivelr/commit-validator mr_iid=1
-2025-11-09 10:15:23.567 | INFO     | rate_my_mr.gitlab              | 87654321 | MR fetched successfully | title="Update documentation"
-2025-11-09 10:15:24.123 | INFO     | rate_my_mr.llm_adapter         | 87654321 | JWT token acquired | duration_ms=234
-2025-11-09 10:15:26.789 | INFO     | rate_my_mr.rate_my_mr          | 87654321 | AI summary completed | success=True
-2025-11-09 10:15:29.012 | INFO     | rate_my_mr.rate_my_mr          | 87654321 | AI code review completed | success=True
-2025-11-09 10:15:29.345 | INFO     | rate_my_mr.loc                 | 87654321 | LOC calculated | added=156 removed=23 net=133
-2025-11-09 10:15:29.567 | INFO     | rate_my_mr.cal_rating          | 87654321 | Rating calculated | score=4.0
-2025-11-09 10:15:29.890 | INFO     | rate_my_mr.gitlab              | 87654321 | Report posted to GitLab
-2025-11-09 10:15:29.890 | INFO     | rate_my_mr.gitlab              | 87654321 | MR analysis completed | duration_ms=6434
+2025-11-17 10:15:23.456 | INFO  | main           | 12345678 | Starting MR analysis
+2025-11-17 10:15:24.123 | INFO  | llm-adapter    | 12345678 | JWT token acquired
+2025-11-17 10:15:26.789 | INFO  | rate-my-mr     | 12345678 | AI summary completed | success=True
+2025-11-17 10:15:29.012 | INFO  | loc-analyzer   | 12345678 | LOC calculated | added=156 removed=23
+2025-11-17 10:15:29.567 | INFO  | security-scan  | 12345678 | Security scan completed | high=0 medium=1
+2025-11-17 10:15:29.890 | INFO  | main           | 12345678 | Final rating: 4/5
 ```
 
----
-
-## Logging
-
-### Structured Logging Format
-
-All validators use **pipe-separated, structured logging** for easy parsing:
-
-**Format**:
+**GitLab MR Comment Example:**
 ```
-YYYY-MM-DD HH:MM:SS.mmm | LEVEL    | module.name                    | REQ_ID   | Message | key=value
-```
+## Overall Rating: 4/5
 
-**Features**:
-- ✅ Millisecond precision timestamps
-- ✅ Column-aligned for visual scanning
-- ✅ Correlation IDs (REQUEST_ID_SHORT) for request tracing
-- ✅ Structured key=value pairs
-- ✅ Organized directory structure (by date/project/MR)
+### Quality Assessment Results
 
-### Log Directory Structure
+#### [*] Summary Analysis
+[+] AI-powered summary generated successfully
 
-**Organized Structure** (default when `LOG_STRUCTURE=organized`):
+<details>
+<summary>Click to expand AI Summary</summary>
+This MR adds authentication middleware...
+</details>
 
-```
-/home/docker/tmp/mr-validator-logs/
-├── webhook/
-│   └── 2025-11-09/
-│       └── webhook-server.log
-│
-└── validations/
-    └── 2025-11-09/
-        └── vigneshpalanivelr_commit-validator/
-            └── mr-42/
-                └── rate-my-mr-87654321.log
+#### [~] Cyclomatic Complexity Analysis
+- **Average Complexity**: 8 (Good)
+- **Methods Analyzed**: 12
+
+#### [#] Security Scan Analysis
+- **HIGH Severity Issues**: 0
+- **MEDIUM Severity Issues**: 1
+- **LOW Severity Issues**: 3
 ```
 
-**Flat Structure** (when `LOG_STRUCTURE=flat`):
+### Code Formatting (mrproper-clang-format)
 
-```
-/home/docker/tmp/mr-validator-logs/
-├── webhook-server.log
-├── rate-my-mr-87654321-container123.log
-└── gitlab-api-87654321-container123.log
-```
-
-### Viewing Logs
-
-**Find logs for specific MR**:
 ```bash
-# Organized structure
-LOG_DIR=/home/docker/tmp/mr-validator-logs
-PROJECT="vigneshpalanivelr_commit-validator"
-MR_IID=42
-DATE=$(date +%Y-%m-%d)
-
-tail -f $LOG_DIR/validations/$DATE/$PROJECT/mr-$MR_IID/*.log
+docker run --rm --env-file mrproper.env \
+  mr-checker-vp-test mrproper-clang-format org%2Frepo 42
 ```
 
-**Expected Output**:
-```
-2025-11-09 10:15:23.456 | INFO     | rate_my_mr.gitlab              | 87654321 | Starting MR analysis | project=vigneshpalanivelr/commit-validator mr_iid=42
-2025-11-09 10:15:23.567 | DEBUG    | rate_my_mr.gitlab              | 87654321 | Fetching MR details | mr_iid=42
-2025-11-09 10:15:23.890 | INFO     | rate_my_mr.gitlab              | 87654321 | MR fetched successfully | title="Update docs" state=opened
-```
+### Commit Message (mrproper-message)
 
-**Trace by REQUEST_ID**:
 ```bash
-# Find all logs for specific request
-grep "87654321" /home/docker/tmp/mr-validator-logs/**/**/**/*.log
+docker run --rm --env-file mrproper.env \
+  mr-checker-vp-test mrproper-message org%2Frepo 42
 ```
-
-**Monitor webhook server**:
-```bash
-tail -f /home/docker/tmp/mr-validator-logs/webhook/$(date +%Y-%m-%d)/webhook-server.log
-```
-
-**See**: [LOGGING_CONFIGURATION.md](./LOGGING_CONFIGURATION.md) for complete logging setup guide
 
 ---
 
@@ -701,274 +441,319 @@ tail -f /home/docker/tmp/mr-validator-logs/webhook/$(date +%Y-%m-%d)/webhook-ser
 
 ### Quick Diagnostics
 
-**Check webhook server status**:
 ```bash
+# Check webhook server
 docker ps | grep webhook
-```
+curl http://localhost:9912/
 
-**Expected Output**:
-```
-abc123def456   mrproper-webhook-vp-test   "/bin/sh -c 'python…"   10 minutes ago   Up 10 minutes   0.0.0.0:9912->9912/tcp   mrproper-webhook-vp-test
-```
+# Check recent validations
+docker ps -a | grep mr-checker | head -5
 
-**Check recent validation containers**:
-```bash
-docker ps -a | grep mr-checker-vp-test | head -5
-```
-
-**Expected Output**:
-```
-def456ghi789   mr-checker-vp-test   "rate-my-mr vignesh…"   2 minutes ago   Exited (0) 2 minutes ago                      mr-rate-my-mr-42-87654321
-ghi789jkl012   mr-checker-vp-test   "mrproper-message v…"   5 minutes ago   Exited (0) 5 minutes ago                      mr-mrproper-message-42-12345678
-```
-
-**View webhook logs**:
-```bash
+# View webhook logs
 docker logs mrproper-webhook-vp-test --tail 50
-```
 
-**Expected Output**:
-```
-2025-11-09 10:15:20.123 | INFO     | webhook.server                 | unknown  | Webhook server started | port=9912
-2025-11-09 10:15:23.456 | INFO     | webhook.server                 | 87654321 | Webhook received | project=vigneshpalanivelr/commit-validator mr_iid=42
-2025-11-09 10:15:23.567 | INFO     | webhook.server                 | 87654321 | Spawning validator | validator=rate-my-mr
+# Find logs for specific MR
+ls /home/docker/tmp/mr-validator-logs/validations/$(date +%Y-%m-%d)/*/mr-42/
 ```
 
 ### Common Issues
 
-#### Issue: Webhook Not Responding
+| Issue | Diagnosis | Solution |
+|-------|-----------|----------|
+| No containers spawned | `grep "container started" webhook-server.log` | Check mrproper.env exists |
+| 401 Unauthorized | `grep "401" rate-my-mr-*.log` | Verify GITLAB_ACCESS_TOKEN |
+| AI service timeout | `grep "Timeout" rate-my-mr-*.log` | Check BFA_HOST reachable |
+| Wrong API URL | `grep "bfa_url" rate-my-mr-*.log` | Ensure BFA_HOST is set |
 
-**Symptom**: No containers spawned when MR created/updated
+### Debug by REQUEST_ID
 
-**Diagnosis**:
+Every request has unique ID for correlation:
+
 ```bash
-# Check if webhook server is running
-docker ps | grep webhook
+# Find REQUEST_ID
+grep "NEW WEBHOOK" webhook-server.log | tail -1
+# Output: [87654321] === NEW WEBHOOK REQUEST ===
 
-# Test webhook endpoint
-curl -X POST http://your-server:9912/mr-proper/rate-my-mr
+# Trace full flow
+grep "87654321" /home/docker/tmp/mr-validator-logs/**/**/**/*.log
 ```
 
-**Expected Response**:
-```
-OK!
-```
+### Log Module Names
 
-**Solutions**:
-- Verify webhook server container is running
-- Check GitLab webhook URL is correct
-- Check port 9912 is accessible
-- Review webhook server logs
+| Module Name | Description |
+|-------------|-------------|
+| `main` | Main validator orchestrator |
+| `rate-my-mr` | AI analysis coordinator |
+| `llm-adapter` | LLM/BFA API client |
+| `loc-analyzer` | Lines of code metrics |
+| `cc-analyzer` | Cyclomatic complexity |
+| `security-scan` | Bandit security scanner |
+| `config-loader` | Repository config loader |
+| `rating-calc` | Final score calculator |
 
-#### Issue: GitLab API Errors (401 Unauthorized)
+<details>
+<summary><b>Click to expand: Complete Troubleshooting Scenarios</b></summary>
 
-**Symptom**: Validator logs show "401 Unauthorized" or "Sorry, unauthorized"
+#### Scenario 1: Container Starts But Fails Immediately
 
-**Diagnosis**:
+**Symptoms:** Container in `docker ps -a` with non-zero exit code
+
+**Debug Steps:**
 ```bash
-# Test GitLab API access
-source mrproper.env
+# 1. Check webhook log for container start
+grep "\[12345678\] Checker rate-my-mr container" webhook-server.log
+
+# 2. Check validator log for startup errors
+head -50 /home/docker/tmp/mr-validator-logs/rate-my-mr-*12345678*.log
+
+# 3. Check exit code
+docker inspect mr-rate-my-mr-42-12345678 --format='{{.State.ExitCode}}'
+# Exit codes: 0=Success, 1=Error, 137=OOM, 139=Segfault
+```
+
+**Common causes:**
+- Missing environment variables (GITLAB_ACCESS_TOKEN, BFA_HOST)
+- GitLab API authentication failure
+- Git clone failure (network, permissions)
+
+#### Scenario 2: Container Never Starts
+
+**Symptoms:** No container found in `docker ps -a`
+
+**Debug Steps:**
+```bash
+# Check webhook log for docker command failure
+grep -A 5 "\[12345678\] Failed to start checker" webhook-server.log
+
+# Check Docker daemon
+docker info
+```
+
+**Common causes:**
+- Docker image not found: `mr-checker-vp-test`
+- Docker daemon not responding
+- mrproper.env file missing
+- Insufficient Docker permissions
+
+#### Scenario 3: Container Runs But AI Service Fails
+
+**Symptoms:** Container exits, but analysis incomplete
+
+**Debug Steps:**
+```bash
+# Search for AI service errors
+grep "AI Service\|LLM API" /path/to/rate-my-mr-*.log | grep -i error
+
+# Check retry attempts
+grep "Retry attempt" /path/to/rate-my-mr-*.log
+
+# Check BFA connectivity
+curl -s http://${BFA_HOST}:8000/health
+```
+
+**Expected retry logs:**
+```
+[DEBUG] AI Service Connection Error (attempt 1): ...
+[DEBUG] Retry attempt 2/3 after 2s wait...
+[DEBUG] AI Service Connection Error (attempt 2): ...
+[DEBUG] Retry attempt 3/3 after 4s wait...
+[ERROR] All 3 attempts failed - AI service not reachable
+```
+
+**Common causes:**
+- BFA_HOST misconfigured
+- AI service timeout (>120s per attempt)
+- AI service returns 5xx errors
+- Network connectivity issues
+
+#### Scenario 4: Container Runs But No GitLab Comment
+
+**Symptoms:** Container exits successfully (code 0) but no comment on MR
+
+**Debug Steps:**
+```bash
+# Search for GitLab API posting
+grep "Posting discussion" /path/to/rate-my-mr-*.log
+
+# Check for posting errors
+grep "Failed to post" /path/to/rate-my-mr-*.log
+
+# Test GitLab API
 curl -H "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" \
-     https://git.internal.com/api/v4/projects | jq '.[] | {id, name}'
+  "https://gitlab.com/api/v4/user"
 ```
 
-**Expected Output**:
-```json
-{
-  "id": 123,
-  "name": "commit-validator"
-}
-{
-  "id": 456,
-  "name": "another-project"
-}
-```
+**Common causes:**
+- GITLAB_ACCESS_TOKEN invalid or expired
+- Insufficient GitLab permissions (need API scope)
+- Network issues reaching GitLab API
+- MR already merged/closed
 
-**Solutions**:
-- Verify `GITLAB_ACCESS_TOKEN` is correct in `mrproper.env`
-- Ensure token has `api` scope
-- Check token hasn't expired
-- Verify GitLab host in `gitlab.py` matches your instance
+#### Scenario 5: Container Stuck/Hanging
 
-#### Issue: AI Service Connectivity
+**Symptoms:** Container running for >10 minutes
 
-**Symptom**: AI validation fails or times out
-
-**Diagnosis**:
+**Debug Steps:**
 ```bash
-# Test AI service
-curl -X POST http://10.31.88.29:6006/generate \
+# Check if container is still running
+docker ps | grep mr-rate-my-mr-42-12345678
+
+# Check resource usage
+docker stats mr-rate-my-mr-42-12345678 --no-stream
+
+# Check processes inside container
+docker top mr-rate-my-mr-42-12345678
+
+# Check validator log for last activity
+tail -20 /path/to/rate-my-mr-*.log
+```
+
+**Common causes:**
+- AI service timeout (waiting for response)
+- Large MR taking long time to process
+- Network issue (hanging on git clone)
+- Deadlock or infinite loop (rare)
+
+#### Scenario 6: LLM Adapter (JWT Token) Issues
+
+**Symptoms:** Validation fails with token-related errors
+
+**Debug Steps:**
+```bash
+# Check token acquisition
+grep "JWT token" /path/to/rate-my-mr-*.log
+
+# Expected successful flow:
+# [DEBUG] Requesting JWT token from http://api-gateway.internal.com:8000/api/token
+# [DEBUG] Token subject: rate-my-mr-org%2Frepo-42
+# [DEBUG] Token API response status: 200
+# [DEBUG] JWT token acquired successfully for org%2Frepo-42
+# [DEBUG] Token (first 20 chars): eyJhbGciOiJIUzI1Ni...
+
+# Count token acquisitions (should be 1 per MR)
+grep -c "Requesting JWT token" /path/to/rate-my-mr-*.log
+# Expected: 1
+
+# Count token reuse (should be 3 for 4 AI calls)
+grep -c "Reusing existing session token" /path/to/rate-my-mr-*.log
+# Expected: 3
+
+# Check for 401 errors
+grep "401\|Unauthorized\|authentication failed" /path/to/rate-my-mr-*.log
+```
+
+**Manual token test:**
+```bash
+# Test token endpoint
+curl -X POST "http://${BFA_HOST}:8000/api/token" \
   -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "test"}],
-    "temperature": 0.7
-  }' | jq
+  -d '{"subject":"rate-my-mr-test-project-123"}' \
+  -v
+
+# Expected response:
+# HTTP/1.1 200 OK
+# {"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}
 ```
 
-**Expected Output**:
-```json
-{
-  "response": "Test response from AI service",
-  "tokens": 42
-}
+**Common causes:**
+- BFA_HOST unreachable → Check network
+- Token API returns 401 → Invalid credentials
+- 401 on LLM calls → Expired/invalid token
+- Connection refused → BFA service down
+
+#### Log Directory Structure (Organized Mode)
+
+```
+/home/docker/tmp/mr-validator-logs/
+│
+├── webhook/
+│   ├── 2025-11-08/
+│   │   ├── webhook-server.log
+│   │   ├── webhook-server.log.1
+│   │   └── webhook-server.log.2
+│   │
+│   └── 2025-11-09/
+│       └── webhook-server.log
+│
+└── validations/
+    ├── 2025-11-08/
+    │   ├── vigneshpalanivelr_commit-validator/
+    │   │   ├── mr-1/
+    │   │   │   ├── rate-my-mr-4adcc17d.log
+    │   │   │   ├── rate-my-mr-4adcc17d.log.1
+    │   │   │   └── gitlab-api-4adcc17d.log
+    │   │   │
+    │   │   └── mr-2/
+    │   │       └── rate-my-mr-8b3ef21a.log
+    │   │
+    │   └── another_project/
+    │       └── mr-5/
+    │           └── rate-my-mr-1c2d3e4f.log
+    │
+    └── 2025-11-09/
+        └── vigneshpalanivelr_commit-validator/
+            └── mr-3/
+                └── rate-my-mr-9f8e7d6c.log
 ```
 
-**Solutions**:
-- Verify AI service is running
-- Check network connectivity from validator containers
-- Review `AI_SERVICE_URL` configuration
-- Check firewall rules
+#### Viewing and Analyzing Logs
 
-#### Issue: Container Fails Immediately
-
-**Symptom**: Validator containers exit with non-zero status
-
-**Diagnosis**:
+**View latest logs for MR:**
 ```bash
-# Find recent failed containers
-docker ps -a | grep "Exited ([1-9]" | grep mr-checker
+LOG_DIR=/mnt/nfs/mr-validator-logs
+PROJECT="vigneshpalanivelr_commit-validator"
+MR_IID=42
+DATE=$(date +%Y-%m-%d)
 
-# View logs of failed container
-docker logs <container-id>
+tail -f "$LOG_DIR/validations/$DATE/$PROJECT/mr-$MR_IID/rate-my-mr-*.log"
 ```
 
-**Common Causes**:
-- Missing `mrproper.env` file
-- Wrong Docker image name
-- Missing dependencies
-- Python module import errors
-
-**Solution**:
+**Search logs by correlation ID:**
 ```bash
-# Rebuild images with latest dependencies
-./build-docker-images
-
-# Test manual run
-docker run --rm --env-file mrproper.env \
-  mr-checker-vp-test rate-my-mr \
-  test%2Fproject 1
+REQUEST_ID_SHORT="4adcc17d"
+grep "$REQUEST_ID_SHORT" /mnt/nfs/mr-validator-logs/validations/**/**/**/*.log
 ```
 
-### Debug Workflow
-
-```mermaid
-flowchart TD
-    A[Issue Reported] --> B{Webhook<br/>responding?}
-    B -->|No| C[Check webhook server<br/>docker ps grep webhook]
-    B -->|Yes| D{Containers<br/>spawning?}
-    D -->|No| E[Check webhook logs<br/>docker logs webhook]
-    D -->|Yes| F{Containers<br/>succeeding?}
-    F -->|No| G[Check container logs<br/>docker logs container-id]
-    F -->|Yes| H{Results posting<br/>to GitLab?}
-    H -->|No| I[Test GitLab API<br/>curl with token]
-    H -->|Yes| J[Check MR discussions<br/>in GitLab UI]
-
-    C --> K[Restart: ./start-server]
-    E --> L[Check mrproper.env]
-    G --> M[Check dependencies<br/>./build-docker-images]
-    I --> N[Verify GITLAB_ACCESS_TOKEN]
-```
-
-### Request ID Correlation
-
-Every webhook request generates a unique REQUEST_ID for end-to-end tracing.
-
-**Format**: `webhook_YYYYMMDD_HHMMSS_XXXXXXXX`
-**Short Form**: `XXXXXXXX` (last 8 characters)
-
-**Example**:
-- Full: `webhook_20251109_101523_87654321`
-- Short: `87654321`
-
-**Trace complete request flow**:
+**Parse structured logs:**
 ```bash
-REQUEST_ID_SHORT="87654321"
+# Extract all pipeline_id values
+grep "pipeline_id=" /path/to/log.log | sed 's/.*pipeline_id=\([^ ]*\).*/\1/'
 
-# Search all logs
-grep -r "$REQUEST_ID_SHORT" /home/docker/tmp/mr-validator-logs/
+# Extract errors with severity
+grep "severity=" /path/to/log.log | awk -F '|' '{print $3, $5, $6}'
 ```
 
-**Expected Output**:
-```
-/home/docker/tmp/mr-validator-logs/webhook/2025-11-09/webhook-server.log:
-2025-11-09 10:15:23.456 | INFO     | webhook.server | 87654321 | Webhook received | project=vigneshpalanivelr/commit-validator mr_iid=42
+#### Troubleshooting Checklist
 
-/home/docker/tmp/mr-validator-logs/validations/2025-11-09/vigneshpalanivelr_commit-validator/mr-42/rate-my-mr-87654321.log:
-2025-11-09 10:15:23.567 | INFO     | rate_my_mr.gitlab | 87654321 | Starting MR analysis | project=vigneshpalanivelr/commit-validator mr_iid=42
-2025-11-09 10:15:29.890 | INFO     | rate_my_mr.gitlab | 87654321 | MR analysis completed | duration_ms=6434
-```
+- [ ] **Webhook received?** Check webhook-server.log for REQUEST_ID
+- [ ] **Container spawned?** Check webhook log for "container started successfully"
+- [ ] **Container still running?** Use `docker ps` with container name
+- [ ] **Container exit code?** Use `docker inspect` for exit code
+- [ ] **Validator log exists?** Check /home/docker/tmp/mr-validator-logs/
+- [ ] **Validator started?** Check first 10 lines of validator log
+- [ ] **Git clone succeeded?** Grep validator log for "git clone" or "Git init"
+- [ ] **Config loaded?** Grep for "Configuration loaded"
+- [ ] **JWT token acquired?** Grep for "JWT token acquired"
+- [ ] **AI service reachable?** Grep for "AI Service Response"
+- [ ] **AI service timeout?** Grep for "Timeout" or "Retry attempt"
+- [ ] **GitLab posting succeeded?** Grep for "Successfully posted discussion"
+- [ ] **Environment variables set?** Check mrproper.env file
+- [ ] **Network connectivity?** Test from Docker host to GitLab & BFA service
 
-**See**: [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md) for comprehensive troubleshooting procedures
+</details>
 
 ---
 
 ## Documentation
 
-### Core Documentation
-
-| Document | Purpose | Audience |
-|----------|---------|----------|
-| [README.md](./README.md) | Setup and quick start | Users, Operators |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | System design and internals | Developers, DevOps |
-| [DEBUGGING_GUIDE.md](./DEBUGGING_GUIDE.md) | Troubleshooting procedures | Operators, Support |
-| [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md) | LLM JWT adapter details | Developers, Integrators |
-| [COMPREHENSIVE_TEST_PLAN.md](./COMPREHENSIVE_TEST_PLAN.md) | Testing procedures | QA, Developers |
-| [LOGGING_CONFIGURATION.md](./LOGGING_CONFIGURATION.md) | Logging setup guide | Operators, DevOps |
-
-### Quick Links by Topic
-
-| Topic | Link |
-|-------|------|
-| **System Architecture** | [ARCHITECTURE.md](./ARCHITECTURE.md) |
-| **LLM Integration** | [LLM_ADAPTER_IMPLEMENTATION.md](./LLM_ADAPTER_IMPLEMENTATION.md) |
-| **Structured Logging** | [LOGGING_CONFIGURATION.md](./LOGGING_CONFIGURATION.md) |
-| **REQUEST_ID Tracing** | [DEBUGGING_GUIDE.md - REQUEST_ID Section](./DEBUGGING_GUIDE.md#request_id-your-debugging-superpower) |
-| **Testing Procedures** | [COMPREHENSIVE_TEST_PLAN.md](./COMPREHENSIVE_TEST_PLAN.md) |
-| **Webhook Configuration** | [Configuration](#configuration) above |
-
----
-
-## Contributing
-
-### Development Setup
-
-```bash
-# 1. Clone repository
-git clone <repository-url>
-cd commit-validator
-
-# 2. Build development images
-./build-docker-images
-
-# 3. Create test environment
-cp mrproper.env.example mrproper.env
-# Edit mrproper.env with your token
-
-# 4. Start development server
-./start-server
-
-# 5. Test webhook
-curl -X POST http://localhost:9912/mr-proper/rate-my-mr
-```
-
-### Adding New Validators
-
-See [Integration Guide](#validators) section above for step-by-step instructions.
-
-### Code Standards
-
-- Follow existing module patterns in `mrproper/mrproper/`
-- Add comprehensive logging with structured fields
-- Include REQUEST_ID in all log messages
-- Update documentation and tests
-- Test with real GitLab MR before merging
+| Document | Purpose |
+|----------|---------|
+| [README.md](./README.md) | User & Operator Guide |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Developer & Technical Guide |
+| [OPERATIONS.md](./OPERATIONS.md) | DevOps & Maintenance Guide |
 
 ---
 
 ## License
 
 Internal use - see company licensing policies.
-
----
-
-**MR Validator** - Comprehensive automated code quality enforcement integrated directly into the GitLab development workflow.

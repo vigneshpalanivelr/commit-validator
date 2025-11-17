@@ -71,15 +71,34 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
     Returns:
         tuple: (status_code, response_json) or (None/status_code, error_message)
     """
+    slog.info("=" * 50)
+    slog.info("=== SEND REQUEST CALLED ===")
+    slog.info("=" * 50)
+
     # Check if we should use the new LLM adapter
-    use_adapter = HAS_LLM_ADAPTER and os.environ.get('BFA_HOST')
+    bfa_host = os.environ.get('BFA_HOST')
+    use_adapter = HAS_LLM_ADAPTER and bfa_host
+
+    slog.debug("AI Service routing decision",
+               HAS_LLM_ADAPTER=HAS_LLM_ADAPTER,
+               BFA_HOST=bfa_host,
+               use_adapter=use_adapter,
+               url_provided=url)
 
     if use_adapter:
-        slog.debug("Using new LLM adapter", bfa_host_configured=True)
-        return llm_adapter.send_request(payload, url, max_retries)
+        slog.info("Routing to NEW LLM adapter (BFA_HOST configured)",
+                  bfa_host=bfa_host)
+        result = llm_adapter.send_request(payload, url, max_retries)
+        slog.info("LLM adapter returned",
+                  status_code=result[0],
+                  response_type=type(result[1]).__name__)
+        return result
 
     # Legacy direct connection (original implementation)
-    slog.debug("Using legacy direct AI service connection",
+    slog.info("Routing to LEGACY direct AI service connection",
+              url=url,
+              bfa_host_not_set=True)
+    slog.debug("Legacy connection parameters",
                url=url,
                payload_size=len(str(payload)),
                timeout=120,

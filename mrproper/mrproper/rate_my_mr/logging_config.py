@@ -30,13 +30,25 @@ class AlignedPipeFormatter(logging.Formatter):
     - Pipe separators for clean parsing
     - Column alignment for visual scanning
     - Correlation ID (REQUEST_ID_SHORT)
-    - Module name instead of filename
+    - Short, readable module names
     """
 
     # Column widths for alignment
     LEVEL_WIDTH = 8
     MODULE_WIDTH = 30
     CORRELATION_WIDTH = 8
+
+    # Map long module names to short, readable names
+    MODULE_NAME_MAP = {
+        'mrproper.rate_my_mr.rate_my_mr': 'rate-my-mr',
+        'mrproper.rate_my_mr.llm_adapter': 'llm-adapter',
+        'mrproper.rate_my_mr.loc': 'loc-analyzer',
+        'mrproper.rate_my_mr.cyclomatic_complexity': 'cc-analyzer',
+        'mrproper.rate_my_mr.security_scan': 'security-scan',
+        'mrproper.rate_my_mr.cal_rating': 'rating-calc',
+        'mrproper.rate_my_mr.config_loader': 'config-loader',
+        'mrproper.rate_my_mr.logging_config': 'logging',
+    }
 
     def __init__(self):
         # Format with milliseconds
@@ -53,6 +65,17 @@ class AlignedPipeFormatter(logging.Formatter):
         # Add module name (instead of filename)
         # Use logger name if available, otherwise module name
         module_name = record.name if record.name else record.module
+
+        # Map long module names to short readable names
+        if module_name in self.MODULE_NAME_MAP:
+            module_name = self.MODULE_NAME_MAP[module_name]
+        elif module_name.startswith('validator.'):
+            # Main validator logger: validator.20251117_101804_715563 -> main
+            module_name = 'main'
+        elif module_name.startswith('webhook.'):
+            module_name = 'webhook'
+        elif module_name.startswith('gitlab-api.'):
+            module_name = 'gitlab-api'
 
         # Truncate or pad module name to fit width
         if len(module_name) > self.MODULE_WIDTH:

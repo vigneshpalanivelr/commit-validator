@@ -25,12 +25,58 @@ logger, slog = setup_logging(
     mr_iid=MR_IID
 )
 
+# Configure child module loggers to use the same handlers
+# This ensures logs from llm_adapter.py, rate_my_mr.py appear in the same log file
+import logging
+from .logging_config import AlignedPipeFormatter, LogConfig
+
+def configure_child_loggers():
+    """Configure module loggers to use the same file handler as main logger."""
+    config = LogConfig()
+    formatter = AlignedPipeFormatter()
+
+    # Get handlers from main logger
+    file_handler = None
+    console_handler = None
+    for handler in logger.handlers:
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            file_handler = handler
+        elif isinstance(handler, logging.StreamHandler):
+            console_handler = handler
+
+    # Module loggers to configure
+    module_loggers = [
+        'mrproper.rate_my_mr.rate_my_mr',
+        'mrproper.rate_my_mr.llm_adapter',
+        'mrproper.rate_my_mr.loc',
+        'mrproper.rate_my_mr.cyclomatic_complexity',
+        'mrproper.rate_my_mr.security_scan',
+        'mrproper.rate_my_mr.cal_rating',
+        'mrproper.rate_my_mr.config_loader',
+    ]
+
+    for module_name in module_loggers:
+        module_logger = logging.getLogger(module_name)
+        module_logger.setLevel(getattr(logging, config.level))
+        module_logger.handlers = []  # Clear existing handlers
+        if file_handler:
+            module_logger.addHandler(file_handler)
+        if console_handler:
+            module_logger.addHandler(console_handler)
+        module_logger.propagate = False
+
+    slog.debug("Child module loggers configured", modules=len(module_loggers))
+
+configure_child_loggers()
+
 from .. import gitlab  # Import from parent directory (common module)
 from .rate_my_mr import (
     generate_summary, generate_initial_code_review,
-    generate_lint_disable_report, cal_rating, print_banner
+    generate_lint_disable_report, cal_rating, print_banner,
+    cal_cc, cal_ss
 )
 from .loc import LOCCalculator
+from .config_loader import load_config, is_feature_enabled, get_loc_settings, get_cc_settings, get_security_settings, get_lint_settings, get_rating_settings, get_report_settings
 
 HEADER = """\
 :star2: MR Quality Rating Report :star2:
@@ -115,35 +161,37 @@ def create_diff_from_mr(proj, mriid, checkout_dir, mr_data, mrcommits):
             return None
 
 
-def format_rating_report(summary_success, review_success, loc_data, lint_data, rating_score):
+def format_rating_report(summary_success, summary_content, review_success, review_content, loc_data, lint_data, cc_data, ss_data, rating_score):
     """
     Format the complete rating report for GitLab discussion
 
     Args:
         summary_success: Success status of AI summary
+        summary_content: AI-generated summary text
         review_success: Success status of AI review
+        review_content: AI-generated code review text
         loc_data: LOC analysis results
         lint_data: Lint disable analysis results
+        cc_data: Cyclomatic complexity analysis results
+        ss_data: Security scan analysis results
         rating_score: Final quality rating
 
     Returns:
         tuple: (report_body, must_not_be_resolved)
     """
 
-    # Rating visualization
-    stars = ":star:" * int(rating_score) + ":white_circle:" * (5 - int(rating_score))
+    # Rating visualization (without stars emoji repetition)
     report = f"""
 ## Overall Rating: {rating_score}/5
-
-{stars}
 
 ### Quality Assessment Results
 
 #### :mag: Summary Analysis
 """
 
-    if summary_success:
-        report += ":white_check_mark: AI-powered summary generated successfully\n"
+    if summary_success and summary_content:
+        report += f":white_check_mark: AI-powered summary generated successfully\n\n"
+        report += f"<details>\n<summary>Click to expand AI Summary</summary>\n\n{summary_content}\n\n</details>\n"
     else:
         report += ":x: Summary generation failed - check AI service connectivity\n"
 
@@ -151,8 +199,9 @@ def format_rating_report(summary_success, review_success, loc_data, lint_data, r
 #### :microscope: Code Review Analysis
 """
 
-    if review_success:
-        report += ":white_check_mark: Comprehensive AI code review completed\n"
+    if review_success and review_content:
+        report += f":white_check_mark: Comprehensive AI code review completed\n\n"
+        report += f"<details>\n<summary>Click to expand AI Code Review</summary>\n\n{review_content}\n\n</details>\n"
     else:
         report += ":x: Code review analysis failed - check AI service connectivity\n"
 
@@ -176,12 +225,64 @@ def format_rating_report(summary_success, review_success, loc_data, lint_data, r
 
 """
 
+    # Cyclomatic Complexity section
+    report += """#### :cyclone: Cyclomatic Complexity Analysis
+"""
+    if cc_data and isinstance(cc_data, dict):
+        avg_cc = cc_data.get('avg_cc', 0)
+        method_cc = cc_data.get('method_wise_cc', {})
+        cc_status = "Good" if avg_cc <= 10 else "High complexity"
+        report += f"- **Average Complexity**: {avg_cc} ({cc_status})\n"
+        if method_cc:
+            report += f"- **Methods Analyzed**: {len(method_cc)}\n"
+            high_cc_methods = {k: v for k, v in method_cc.items() if v > 10}
+            if high_cc_methods:
+                report += f"- **High Complexity Methods** (CC > 10):\n"
+                for method, cc in sorted(high_cc_methods.items(), key=lambda x: x[1], reverse=True)[:5]:
+                    report += f"  - `{method}`: {cc}\n"
+        report += "\n"
+    else:
+        report += "- **Status**: Analysis not performed or failed\n\n"
+
+    # Security Scan section
+    report += """#### :shield: Security Scan Analysis
+"""
+    if ss_data and isinstance(ss_data, dict):
+        severity_count = ss_data.get('severity_count', {})
+        avg_score = ss_data.get('avg_security_scan_value', 0)
+        high_issues = severity_count.get('HIGH', 0)
+        medium_issues = severity_count.get('MEDIUM', 0)
+        low_issues = severity_count.get('LOW', 0)
+
+        report += f"- **HIGH Severity Issues**: {high_issues} {'(Critical!)' if high_issues > 0 else ''}\n"
+        report += f"- **MEDIUM Severity Issues**: {medium_issues}\n"
+        report += f"- **LOW Severity Issues**: {low_issues}\n"
+        report += f"- **Security Score**: {avg_score:.4f} issues/LOC\n"
+
+        security_report = ss_data.get('security_report', {})
+        results = security_report.get('results', [])
+        if results:
+            report += "\n<details>\n<summary>Click to expand Security Issues</summary>\n\n"
+            for issue in results[:10]:
+                report += f"- **{issue.get('issue_severity', 'UNKNOWN')}** - {issue.get('issue_text', 'Unknown issue')}\n"
+                report += f"  - Test: `{issue.get('test_name', 'unknown')}`\n"
+                report += f"  - Line: {issue.get('line_number', 'N/A')}\n"
+                if issue.get('more_info'):
+                    report += f"  - [More Info]({issue.get('more_info')})\n"
+                report += "\n"
+            report += "</details>\n"
+        report += "\n"
+    else:
+        report += "- **Status**: Analysis not performed or failed\n\n"
+
     # Rating breakdown
     report += f"""### Scoring Breakdown
 | Metric | Status | Impact |
 |--------|--------|--------|
-| Lines of Code | {loc_data.get('net_lines_of_code_change', 0)} lines | {'Within limits' if loc_data.get('net_lines_of_code_change', 0) <= 500 else '⚠️ Exceeds 500 line limit'} |
-| Lint Disables | {lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0} new disables | {'No new disables' if (isinstance(lint_data, dict) and lint_data.get('num_lint_disable', 0) == 0) else '⚠️ New lint suppressions added'} |
+| Lines of Code | {loc_data.get('net_lines_of_code_change', 0)} lines | {'Within limits' if loc_data.get('net_lines_of_code_change', 0) <= 500 else 'Exceeds 500 line limit'} |
+| Lint Disables | {lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0} new disables | {'No new disables' if (isinstance(lint_data, dict) and lint_data.get('num_lint_disable', 0) == 0) else 'New lint suppressions added'} |
+| Cyclomatic Complexity | Avg: {cc_data.get('avg_cc', 'N/A') if isinstance(cc_data, dict) else 'N/A'} | {'Good' if isinstance(cc_data, dict) and cc_data.get('avg_cc', 0) <= 10 else 'High complexity'} |
+| Security Issues | {(ss_data.get('severity_count', {}).get('HIGH', 0) + ss_data.get('severity_count', {}).get('MEDIUM', 0)) if isinstance(ss_data, dict) else 0} HIGH/MEDIUM | {'No critical issues' if isinstance(ss_data, dict) and ss_data.get('severity_count', {}).get('HIGH', 0) == 0 else 'Security concerns'} |
 
 **Final Score**: {rating_score}/5 points
 
@@ -353,6 +454,17 @@ def handle_mr(proj, mriid):
             slog.error("Git checkout failed", error=str(checkout_error), error_type=type(checkout_error).__name__)
             raise
 
+        # Load repository-specific configuration
+        slog.debug("Loading repository configuration", repo_dir=tdir)
+        config = load_config(tdir)
+        slog.info("Configuration loaded",
+                  ai_summary=is_feature_enabled(config, 'ai_summary'),
+                  ai_code_review=is_feature_enabled(config, 'ai_code_review'),
+                  loc_analysis=is_feature_enabled(config, 'loc_analysis'),
+                  lint_disable_check=is_feature_enabled(config, 'lint_disable_check'),
+                  cyclomatic_complexity=is_feature_enabled(config, 'cyclomatic_complexity'),
+                  security_scan=is_feature_enabled(config, 'security_scan'))
+
         # Create diff file for analysis
         slog.debug("Creating diff file for analysis")
         diff_file_path = create_diff_from_mr(proj, mriid, tdir, mr, mrcommits)
@@ -386,61 +498,135 @@ Please check the MR manually and retry if necessary.
         print_banner(f"[{REQUEST_ID_SHORT}] Starting Analysis Pipeline")
         slog.info("Analysis pipeline started")
 
-        # 1. Generate AI summary
+        # 1. Generate AI summary (if enabled)
         slog.debug("Step 1: Generating AI summary")
-        summary_success, _ = generate_summary(diff_file_path)
-        slog.info("AI summary completed", success=summary_success)
+        if is_feature_enabled(config, 'ai_summary'):
+            summary_success, summary_content = generate_summary(diff_file_path)
+            slog.info("AI summary completed", success=summary_success)
+            if not summary_success:
+                summary_content = ""
+        else:
+            slog.info("AI summary skipped (disabled in config)")
+            summary_success = False
+            summary_content = ""
 
-        # 2. Generate AI code review
+        # 2. Generate AI code review (if enabled)
         slog.debug("Step 2: Generating AI code review")
-        review_success, _ = generate_initial_code_review(diff_file_path)
-        slog.info("AI code review completed", success=review_success)
+        if is_feature_enabled(config, 'ai_code_review'):
+            review_success, review_content = generate_initial_code_review(diff_file_path)
+            slog.info("AI code review completed", success=review_success)
+            if not review_success:
+                review_content = ""
+        else:
+            slog.info("AI code review skipped (disabled in config)")
+            review_success = False
+            review_content = ""
 
-        # 3. Calculate LOC metrics
+        # 3. Calculate LOC metrics (if enabled)
         slog.debug("Step 3: Calculating LOC metrics")
-        print_banner(f"[{REQUEST_ID_SHORT}] LOC Analysis")
-        loc_calculator = LOCCalculator(diff_file_path)
-        loc_success, loc_data = loc_calculator.calculate_loc()
+        if is_feature_enabled(config, 'loc_analysis'):
+            print_banner(f"[{REQUEST_ID_SHORT}] LOC Analysis")
+            loc_settings = get_loc_settings(config)
+            loc_calculator = LOCCalculator(diff_file_path)
+            loc_success, loc_data = loc_calculator.calculate_loc()
 
-        if not loc_success:
-            slog.warning("LOC analysis failed", error=loc_data)
+            if not loc_success:
+                slog.warning("LOC analysis failed", error=loc_data)
+                loc_data = {'lines_of_code_added': 0, 'lines_of_code_removed': 0, 'net_lines_of_code_change': 0}
+            else:
+                slog.info("LOC analysis completed",
+                          added=loc_data.get('lines_of_code_added', 0),
+                          removed=loc_data.get('lines_of_code_removed', 0),
+                          net=loc_data.get('net_lines_of_code_change', 0),
+                          max_lines=loc_settings.get('max_lines', 500))
+        else:
+            slog.info("LOC analysis skipped (disabled in config)")
             loc_data = {'lines_of_code_added': 0, 'lines_of_code_removed': 0, 'net_lines_of_code_change': 0}
-        else:
-            slog.info("LOC analysis completed",
-                      added=loc_data.get('lines_of_code_added', 0),
-                      removed=loc_data.get('lines_of_code_removed', 0),
-                      net=loc_data.get('net_lines_of_code_change', 0))
 
-        # 4. Analyze lint disables
+        # 4. Analyze lint disables (if enabled)
         slog.debug("Step 4: Analyzing lint disables")
-        lint_success, lint_data = generate_lint_disable_report(diff_file_path)
+        if is_feature_enabled(config, 'lint_disable_check'):
+            lint_settings = get_lint_settings(config)
+            lint_success, lint_data = generate_lint_disable_report(diff_file_path)
 
-        if not lint_success:
-            slog.warning("Lint analysis failed", error=lint_data)
-            lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
+            if not lint_success:
+                slog.warning("Lint analysis failed", error=lint_data)
+                lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
+            else:
+                slog.info("Lint analysis completed",
+                          num_disables=lint_data.get('num_lint_disable', 0),
+                          disabled_lints=lint_data.get('lints_that_disabled', ''),
+                          max_new_disables=lint_settings.get('max_new_disables', 10))
         else:
-            slog.info("Lint analysis completed",
-                      num_disables=lint_data.get('num_lint_disable', 0),
-                      disabled_lints=lint_data.get('lints_that_disabled', ''))
+            slog.info("Lint disable analysis skipped (disabled in config)")
+            lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
 
-        # 5. Calculate overall rating
-        slog.debug("Step 5: Calculating overall rating")
+        # 5. Calculate cyclomatic complexity (if enabled)
+        slog.debug("Step 5: Calculating cyclomatic complexity")
+        if is_feature_enabled(config, 'cyclomatic_complexity'):
+            print_banner(f"[{REQUEST_ID_SHORT}] Cyclomatic Complexity Analysis")
+            cc_settings = get_cc_settings(config)
+            try:
+                cc_data = cal_cc(diff_file_path)
+                if cc_data:
+                    slog.info("Cyclomatic complexity completed",
+                              avg_cc=cc_data.get('avg_cc', 0),
+                              methods=len(cc_data.get('method_wise_cc', {})),
+                              max_average=cc_settings.get('max_average', 10))
+                else:
+                    cc_data = {}
+            except Exception as cc_error:
+                slog.warning("Cyclomatic complexity failed", error=str(cc_error))
+                cc_data = {}
+        else:
+            slog.info("Cyclomatic complexity analysis skipped (disabled in config)")
+            cc_data = {}
+
+        # 6. Security scan (if enabled)
+        slog.debug("Step 6: Running security scan")
+        if is_feature_enabled(config, 'security_scan'):
+            print_banner(f"[{REQUEST_ID_SHORT}] Security Scan Analysis")
+            security_settings = get_security_settings(config)
+            try:
+                ss_data = cal_ss(diff_file_path)
+                if ss_data:
+                    severity = ss_data.get('severity_count', {})
+                    slog.info("Security scan completed",
+                              high=severity.get('HIGH', 0),
+                              medium=severity.get('MEDIUM', 0),
+                              low=severity.get('LOW', 0),
+                              fail_on_high=security_settings.get('fail_on_high', True))
+                else:
+                    ss_data = {}
+            except Exception as ss_error:
+                slog.warning("Security scan failed", error=str(ss_error))
+                ss_data = {}
+        else:
+            slog.info("Security scan skipped (disabled in config)")
+            ss_data = {}
+
+        # 7. Calculate overall rating
+        slog.debug("Step 7: Calculating overall rating")
+        rating_settings = get_rating_settings(config)
         rating_score = cal_rating(
             loc_data.get('net_lines_of_code_change', 0),
             lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0
         )
-        slog.info("Final rating calculated", score=rating_score, max_score=5)
+        slog.info("Final rating calculated",
+                  score=rating_score,
+                  max_score=5,
+                  pass_threshold=rating_settings.get('pass_score', 3))
         print_banner(f"[{REQUEST_ID_SHORT}] Final Rating: {rating_score}/5")
 
     # Format report for GitLab
-    slog.debug("Step 6: Formatting report for GitLab")
+    slog.debug("Step 8: Formatting report for GitLab")
     report_body, must_not_be_resolved = format_rating_report(
-        summary_success, review_success, loc_data, lint_data, rating_score
+        summary_success, summary_content, review_success, review_content, loc_data, lint_data, cc_data, ss_data, rating_score
     )
     slog.debug("Report formatted", must_not_be_resolved=must_not_be_resolved)
 
     # Post results to GitLab
-    slog.debug("Step 7: Posting results to GitLab")
+    slog.debug("Step 9: Posting results to GitLab")
     try:
         gitlab.update_discussion(proj, mriid, HEADER, report_body, must_not_be_resolved)
         slog.info("Report posted to GitLab successfully")
