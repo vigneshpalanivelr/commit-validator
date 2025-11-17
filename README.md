@@ -365,11 +365,11 @@ flowchart LR
     A --> G[~ Complexity<br/>Cyclomatic score<br/>Method complexity]
     B & C & D & E & F & G --> H[★ Rating 1-5<br/>Weighted score<br/>Pass/Fail decision]
 
-    classDef input fill:#4a90e2,color:#fff,stroke:#2171c7
-    classDef ai fill:#ab47bc,color:#fff,stroke:#8e24aa
-    classDef metrics fill:#29b6f6,color:#fff,stroke:#03a9f4
-    classDef security fill:#ef5350,color:#fff,stroke:#e53935
-    classDef output fill:#66bb6a,color:#fff,stroke:#43a047
+    classDef input fill:#d4e5f7,color:#333,stroke:#a8c8e8
+    classDef ai fill:#e1bee7,color:#333,stroke:#ce93d8
+    classDef metrics fill:#e3f2fd,color:#333,stroke:#b3d4f7
+    classDef security fill:#ffcdd2,color:#333,stroke:#ef9a9a
+    classDef output fill:#c8e6c9,color:#333,stroke:#a5d6a7
 
     class A input
     class B,C ai

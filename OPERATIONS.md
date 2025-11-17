@@ -61,11 +61,11 @@ flowchart TB
     B -->|"Write logs"| C
     C -->|"Mount"| F
 
-    classDef host fill:#0db7ed,color:#fff,stroke:#099dd9
-    classDef external fill:#f9a825,color:#fff,stroke:#f57f17
-    classDef gitlab fill:#fc6d26,color:#fff,stroke:#e24329
-    classDef bfa fill:#4caf50,color:#fff,stroke:#388e3c
-    classDef storage fill:#9c27b0,color:#fff,stroke:#7b1fa2
+    classDef host fill:#c5e8f7,color:#333,stroke:#9ad0e8
+    classDef external fill:#fff8dc,color:#333,stroke:#e8d890
+    classDef gitlab fill:#ffd4c4,color:#333,stroke:#e8a090
+    classDef bfa fill:#c8e6c9,color:#333,stroke:#a5d6a7
+    classDef storage fill:#e1bee7,color:#333,stroke:#ce93d8
 
     class A,B,C host
     class D gitlab
@@ -381,11 +381,11 @@ flowchart TD
     H -->|Config| K[✓ Check repo config<br/>.rate-my-mr.yaml syntax<br/>Feature flags]
     H -->|Git clone| L[✓ Check repo access<br/>Token permissions<br/>Network connectivity]
 
-    classDef start fill:#4a90e2,color:#fff,stroke:#2171c7
-    classDef step fill:#64b5f6,color:#fff,stroke:#42a5f5
-    classDef decision fill:#ffa726,color:#fff,stroke:#fb8c00
-    classDef error fill:#ef5350,color:#fff,stroke:#e53935
-    classDef solution fill:#66bb6a,color:#fff,stroke:#43a047
+    classDef start fill:#d4e5f7,color:#333,stroke:#a8c8e8
+    classDef step fill:#e3f2fd,color:#333,stroke:#b3d4f7
+    classDef decision fill:#fff8dc,color:#333,stroke:#e8d890
+    classDef error fill:#ffcdd2,color:#333,stroke:#ef9a9a
+    classDef solution fill:#c8e6c9,color:#333,stroke:#a5d6a7
 
     class A start
     class B,C,D,G step
@@ -1430,13 +1430,13 @@ flowchart TD
     K -->|No| L[✗ Rollback<br/>Restore from backup]
     K -->|Yes| M[✓ Done<br/>Upgrade complete]
 
-    classDef prepare fill:#4a90e2,color:#fff,stroke:#2171c7
-    classDef build fill:#29b6f6,color:#fff,stroke:#03a9f4
-    classDef test fill:#ffa726,color:#fff,stroke:#fb8c00
-    classDef deploy fill:#ab47bc,color:#fff,stroke:#8e24aa
-    classDef verify fill:#66bb6a,color:#fff,stroke:#43a047
-    classDef error fill:#ef5350,color:#fff,stroke:#e53935
-    classDef success fill:#4caf50,color:#fff,stroke:#388e3c
+    classDef prepare fill:#d4e5f7,color:#333,stroke:#a8c8e8
+    classDef build fill:#e3f2fd,color:#333,stroke:#b3d4f7
+    classDef test fill:#fff8dc,color:#333,stroke:#e8d890
+    classDef deploy fill:#e1bee7,color:#333,stroke:#ce93d8
+    classDef verify fill:#c8e6c9,color:#333,stroke:#a5d6a7
+    classDef error fill:#ffcdd2,color:#333,stroke:#ef9a9a
+    classDef success fill:#e8f5e9,color:#333,stroke:#c8e6c9
 
     class A,G prepare
     class B,H build

@@ -82,10 +82,10 @@ flowchart TB
     D2 -->|"GET /api/v4"| E
     D3 -->|"GET /api/v4"| E
 
-    classDef gitlab fill:#fc6d26,color:#fff,stroke:#e24329
-    classDef webhook fill:#4a90e2,color:#fff,stroke:#2171c7
-    classDef docker fill:#0db7ed,color:#fff,stroke:#099dd9
-    classDef services fill:#f9a825,color:#fff,stroke:#f57f17
+    classDef gitlab fill:#ffd4c4,color:#333,stroke:#e8a090
+    classDef webhook fill:#d4e5f7,color:#333,stroke:#a8c8e8
+    classDef docker fill:#c5e8f7,color:#333,stroke:#9ad0e8
+    classDef services fill:#fff3c4,color:#333,stroke:#e8d890
 
     class A gitlab
     class B,C webhook
@@ -104,19 +104,19 @@ sequenceDiagram
     participant VA as ★ Validator
     participant BFA as ◎ BFA Service
 
-    rect rgb(252, 109, 38, 0.1)
+    rect rgb(255, 212, 196, 0.3)
         Note over GL,WH: Webhook Trigger
         GL->>WH: POST /mr-proper/rate-my-mr
         Note over WH: Generate REQUEST_ID<br/>20251117_101804_715563
     end
 
-    rect rgb(13, 183, 237, 0.1)
+    rect rgb(197, 232, 247, 0.3)
         Note over WH,VA: Container Lifecycle
         WH->>DC: docker run --env REQUEST_ID=...
         DC->>VA: Start container (mr-rate-my-mr-42-71556)
     end
 
-    rect rgb(249, 168, 37, 0.1)
+    rect rgb(255, 243, 196, 0.3)
         Note over VA,BFA: Authentication & Analysis
         VA->>GL: GET /api/v4/projects/.../merge_requests/42
         GL-->>VA: MR metadata (title, author, branch)
@@ -130,7 +130,7 @@ sequenceDiagram
         end
     end
 
-    rect rgb(76, 175, 80, 0.1)
+    rect rgb(200, 230, 201, 0.3)
         Note over VA,GL: Report & Cleanup
         VA->>GL: POST /api/v4/.../discussions<br/>Rating: 4/5 ★
         GL-->>VA: 201 Created
@@ -205,10 +205,10 @@ flowchart TD
     H --> K[🎯 Return to caller]
     J --> K
 
-    classDef decision fill:#ffd54f,stroke:#f9a825,color:#000
-    classDef newmode fill:#4caf50,stroke:#388e3c,color:#fff
-    classDef legacy fill:#ff9800,stroke:#f57c00,color:#fff
-    classDef result fill:#2196f3,stroke:#1976d2,color:#fff
+    classDef decision fill:#fff8dc,stroke:#e8d890,color:#333
+    classDef newmode fill:#c8e6c9,stroke:#a5d6a7,color:#333
+    classDef legacy fill:#ffe0b2,stroke:#ffcc80,color:#333
+    classDef result fill:#bbdefb,stroke:#90caf9,color:#333
 
     class B decision
     class C,E,F,G,H newmode
@@ -285,10 +285,10 @@ flowchart LR
     B --> C[🔀 Deep Merge<br/>Override defaults]
     C --> D[✅ Final Config<br/>Applied to pipeline]
 
-    classDef default fill:#e0e0e0,stroke:#9e9e9e,color:#000
-    classDef repo fill:#fff59d,stroke:#fbc02d,color:#000
-    classDef merge fill:#81d4fa,stroke:#29b6f6,color:#000
-    classDef final fill:#a5d6a7,stroke:#66bb6a,color:#000
+    classDef default fill:#f5f5f5,stroke:#e0e0e0,color:#333
+    classDef repo fill:#fff8dc,stroke:#e8d890,color:#333
+    classDef merge fill:#e1f5fe,stroke:#b3e5fc,color:#333
+    classDef final fill:#e8f5e9,stroke:#c8e6c9,color:#333
 
     class A default
     class B repo
@@ -546,12 +546,12 @@ flowchart TD
     K -->|"✅ Pass"| L[🟢 Set resolved = true]
     K -->|"❌ Fail"| M[🔴 Set resolved = false]
 
-    classDef fetch fill:#e3f2fd,stroke:#1976d2,color:#000
-    classDef decision fill:#fff3e0,stroke:#ff9800,color:#000
-    classDef action fill:#f3e5f5,stroke:#9c27b0,color:#000
-    classDef success fill:#e8f5e9,stroke:#4caf50,color:#000
-    classDef pass fill:#4caf50,stroke:#2e7d32,color:#fff
-    classDef fail fill:#f44336,stroke:#c62828,color:#fff
+    classDef fetch fill:#e3f2fd,stroke:#b3d4f7,color:#333
+    classDef decision fill:#fff8dc,stroke:#e8d890,color:#333
+    classDef action fill:#f3e5f5,stroke:#e1bee7,color:#333
+    classDef success fill:#e8f5e9,stroke:#c8e6c9,color:#333
+    classDef pass fill:#c8e6c9,stroke:#a5d6a7,color:#333
+    classDef fail fill:#ffcdd2,stroke:#ef9a9a,color:#333
 
     class A fetch
     class B,E,K decision
