@@ -158,13 +158,15 @@ def create_diff_from_mr(proj, mriid, checkout_dir, mr_data, mrcommits):
             return None
 
 
-def format_rating_report(summary_success, review_success, loc_data, lint_data, rating_score):
+def format_rating_report(summary_success, summary_content, review_success, review_content, loc_data, lint_data, rating_score):
     """
     Format the complete rating report for GitLab discussion
 
     Args:
         summary_success: Success status of AI summary
+        summary_content: AI-generated summary text
         review_success: Success status of AI review
+        review_content: AI-generated code review text
         loc_data: LOC analysis results
         lint_data: Lint disable analysis results
         rating_score: Final quality rating
@@ -173,20 +175,18 @@ def format_rating_report(summary_success, review_success, loc_data, lint_data, r
         tuple: (report_body, must_not_be_resolved)
     """
 
-    # Rating visualization
-    stars = ":star:" * int(rating_score) + ":white_circle:" * (5 - int(rating_score))
+    # Rating visualization (without stars emoji repetition)
     report = f"""
 ## Overall Rating: {rating_score}/5
-
-{stars}
 
 ### Quality Assessment Results
 
 #### :mag: Summary Analysis
 """
 
-    if summary_success:
-        report += ":white_check_mark: AI-powered summary generated successfully\n"
+    if summary_success and summary_content:
+        report += f":white_check_mark: AI-powered summary generated successfully\n\n"
+        report += f"<details>\n<summary>Click to expand AI Summary</summary>\n\n{summary_content}\n\n</details>\n"
     else:
         report += ":x: Summary generation failed - check AI service connectivity\n"
 
@@ -194,8 +194,9 @@ def format_rating_report(summary_success, review_success, loc_data, lint_data, r
 #### :microscope: Code Review Analysis
 """
 
-    if review_success:
-        report += ":white_check_mark: Comprehensive AI code review completed\n"
+    if review_success and review_content:
+        report += f":white_check_mark: Comprehensive AI code review completed\n\n"
+        report += f"<details>\n<summary>Click to expand AI Code Review</summary>\n\n{review_content}\n\n</details>\n"
     else:
         report += ":x: Code review analysis failed - check AI service connectivity\n"
 
@@ -431,13 +432,17 @@ Please check the MR manually and retry if necessary.
 
         # 1. Generate AI summary
         slog.debug("Step 1: Generating AI summary")
-        summary_success, _ = generate_summary(diff_file_path)
+        summary_success, summary_content = generate_summary(diff_file_path)
         slog.info("AI summary completed", success=summary_success)
+        if not summary_success:
+            summary_content = ""
 
         # 2. Generate AI code review
         slog.debug("Step 2: Generating AI code review")
-        review_success, _ = generate_initial_code_review(diff_file_path)
+        review_success, review_content = generate_initial_code_review(diff_file_path)
         slog.info("AI code review completed", success=review_success)
+        if not review_success:
+            review_content = ""
 
         # 3. Calculate LOC metrics
         slog.debug("Step 3: Calculating LOC metrics")
@@ -478,7 +483,7 @@ Please check the MR manually and retry if necessary.
     # Format report for GitLab
     slog.debug("Step 6: Formatting report for GitLab")
     report_body, must_not_be_resolved = format_rating_report(
-        summary_success, review_success, loc_data, lint_data, rating_score
+        summary_success, summary_content, review_success, review_content, loc_data, lint_data, rating_score
     )
     slog.debug("Report formatted", must_not_be_resolved=must_not_be_resolved)
 
