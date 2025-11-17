@@ -1,0 +1,99 @@
+# =============================================================================
+# Rate My MR - Repository Configuration Example
+# =============================================================================
+# Place this file as .rate-my-mr.yaml in your repository root to customize
+# MR quality assessment behavior. All settings are optional - defaults are
+# applied for any missing values.
+# =============================================================================
+
+# Feature toggles - enable/disable specific analysis types
+features:
+  ai_summary: true            # AI-generated MR summary
+  ai_code_review: true        # AI-powered code review feedback
+  loc_analysis: true          # Lines of Code change analysis
+  lint_disable_check: true    # Check for new lint disable statements
+  cyclomatic_complexity: true # Code complexity analysis
+  security_scan: true         # Bandit security vulnerability scan
+
+# Lines of Code thresholds
+loc:
+  max_lines: 500              # Maximum allowed net lines changed
+  warning_threshold: 300      # Threshold for warning (not used in current impl)
+
+# Cyclomatic Complexity settings
+cyclomatic_complexity:
+  max_average: 10             # Maximum average complexity score
+  max_per_method: 15          # Maximum complexity per method
+  show_top_n_methods: 5       # Number of high-complexity methods to show
+
+# Security scan settings
+security:
+  fail_on_high: true          # Block MR on HIGH severity issues
+  fail_on_medium: false       # Block MR on MEDIUM severity issues
+  max_issues_per_loc: 0.05    # Max security issues per line of code (5%)
+  ignored_tests: []           # Bandit test IDs to ignore (e.g., ['B101', 'B311'])
+  show_max_issues: 10         # Maximum issues to display in report
+
+# Lint disable settings
+lint:
+  allowed_disables: []        # Allowed lint disable patterns (e.g., ['too-many-arguments'])
+  max_new_disables: 10        # Maximum new lint disables allowed
+
+# Rating calculation settings
+rating:
+  pass_score: 3               # Minimum score to pass (out of 5)
+  deduct_for_high_loc: true   # Deduct points for exceeding LOC limit
+  deduct_for_lint_disables: true  # Deduct points for lint disables
+  deduct_for_high_cc: false   # Deduct for high complexity (not implemented)
+  deduct_for_security_issues: false  # Deduct for security issues (not implemented)
+
+# Report customization
+report:
+  show_ai_content: true       # Show AI summary/review in collapsible sections
+  show_security_details: true # Show detailed security issue information
+  show_cc_breakdown: true     # Show per-method complexity breakdown
+
+# =============================================================================
+# Example Configurations
+# =============================================================================
+
+# --- Minimal Configuration (disable AI features) ---
+# features:
+#   ai_summary: false
+#   ai_code_review: false
+# loc:
+#   max_lines: 1000
+
+# --- Strict Security Policy ---
+# security:
+#   fail_on_high: true
+#   fail_on_medium: true
+#   show_max_issues: 20
+
+# --- Relaxed for Legacy Code ---
+# cyclomatic_complexity:
+#   max_average: 20
+#   max_per_method: 25
+# lint:
+#   max_new_disables: 50
+# rating:
+#   pass_score: 2
+
+# --- High-Complexity Project (Data Science) ---
+# loc:
+#   max_lines: 2000
+# cyclomatic_complexity:
+#   max_average: 15
+# security:
+#   ignored_tests:
+#     - B101  # assert used
+#     - B311  # random not for crypto
+
+# --- Simple Projects (Focus on Security) ---
+# features:
+#   ai_summary: false
+#   ai_code_review: false
+#   cyclomatic_complexity: false
+# security:
+#   fail_on_high: true
+#   fail_on_medium: true
