@@ -25,6 +25,49 @@ logger, slog = setup_logging(
     mr_iid=MR_IID
 )
 
+# Configure child module loggers to use the same handlers
+# This ensures logs from llm_adapter.py, rate_my_mr.py appear in the same log file
+import logging
+from .logging_config import AlignedPipeFormatter, LogConfig
+
+def configure_child_loggers():
+    """Configure module loggers to use the same file handler as main logger."""
+    config = LogConfig()
+    formatter = AlignedPipeFormatter()
+
+    # Get handlers from main logger
+    file_handler = None
+    console_handler = None
+    for handler in logger.handlers:
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            file_handler = handler
+        elif isinstance(handler, logging.StreamHandler):
+            console_handler = handler
+
+    # Module loggers to configure
+    module_loggers = [
+        'mrproper.rate_my_mr.rate_my_mr',
+        'mrproper.rate_my_mr.llm_adapter',
+        'mrproper.rate_my_mr.loc',
+        'mrproper.rate_my_mr.cyclomatic_complexity',
+        'mrproper.rate_my_mr.security_scan',
+        'mrproper.rate_my_mr.cal_rating',
+    ]
+
+    for module_name in module_loggers:
+        module_logger = logging.getLogger(module_name)
+        module_logger.setLevel(getattr(logging, config.level))
+        module_logger.handlers = []  # Clear existing handlers
+        if file_handler:
+            module_logger.addHandler(file_handler)
+        if console_handler:
+            module_logger.addHandler(console_handler)
+        module_logger.propagate = False
+
+    slog.debug("Child module loggers configured", modules=len(module_loggers))
+
+configure_child_loggers()
+
 from .. import gitlab  # Import from parent directory (common module)
 from .rate_my_mr import (
     generate_summary, generate_initial_code_review,
