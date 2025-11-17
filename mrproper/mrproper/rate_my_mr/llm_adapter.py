@@ -404,7 +404,7 @@ class LLMAdapter:
 
         Args:
             payload: Request payload (in current format)
-            url: Override LLM endpoint URL (optional, uses default if not provided)
+            url: IGNORED - kept for backward compatibility, BFA endpoint is always used
             max_retries: Override default max_retries (optional)
 
         Returns:
@@ -412,15 +412,20 @@ class LLMAdapter:
         """
         max_retries = max_retries or self.max_retries
 
-        # Use provided URL or construct default from BFA_HOST
-        if url is None:
-            url = f"http://{self.bfa_host}:8000/api/rate-my-mr"
+        # ALWAYS use BFA API endpoint - ignore any passed URL (legacy parameter)
+        # The passed URL is from legacy direct connection mode and should not be used
+        bfa_url = f"http://{self.bfa_host}:8000/api/rate-my-mr"
+
+        if url and url != bfa_url:
+            slog.warning("Ignoring legacy URL parameter, using BFA endpoint instead",
+                         legacy_url=url,
+                         bfa_url=bfa_url)
 
         slog.info("=" * 60)
         slog.info("=== LLM ADAPTER REQUEST START ===")
         slog.info("=" * 60)
         slog.debug("LLM Adapter request configuration",
-                   url=url,
+                   url=bfa_url,
                    bfa_host=self.bfa_host,
                    timeout_s=self.api_timeout,
                    max_retries=max_retries,
@@ -467,13 +472,13 @@ class LLMAdapter:
 
                 slog.debug("Sending POST request to LLM API",
                            attempt=f"{attempt + 1}/{max_retries}",
-                           url=url,
+                           url=bfa_url,
                            timeout=self.api_timeout)
 
                 # Log request details before sending
                 slog.debug("Full request details",
                            method="POST",
-                           url=url,
+                           url=bfa_url,
                            headers_keys=list(headers.keys()),
                            payload_keys=list(transformed_payload.keys()),
                            payload_repo=transformed_payload.get('repo'),
@@ -483,7 +488,7 @@ class LLMAdapter:
 
                 request_start_time = time.time()
                 resp = requests.post(
-                    url,
+                    bfa_url,
                     json=transformed_payload,
                     headers=headers,
                     timeout=self.api_timeout
@@ -555,13 +560,13 @@ class LLMAdapter:
             except requests.exceptions.ConnectionError as conn_err:
                 slog.error("LLM API connection error - service may be unreachable",
                            attempt=f"{attempt + 1}/{max_retries}",
-                           url=url,
+                           url=bfa_url,
                            error=str(conn_err),
                            error_type=type(conn_err).__name__)
                 if attempt == max_retries - 1:
                     slog.error("All attempts failed - LLM API not reachable",
                                max_retries=max_retries,
-                               url=url)
+                               url=bfa_url)
                     return None, f"Connection failed after {max_retries} attempts: {str(conn_err)}"
 
             except requests.exceptions.Timeout as timeout_err:
