@@ -194,25 +194,41 @@ def main():
         handlers=[file_handler, console_handler]
     )
     logger = logging.getLogger(__name__)
-    
+
     logger.info("=== MR Validator Webhook Server Starting ===")
     logger.info(f"Current working directory: {os.getcwd()}")
-    logger.info(f"Environment file check: mrproper.env exists = {os.path.isfile('mrproper.env')}")
-    
-    if not os.path.isfile("mrproper.env"):
-        logger.error("ERROR: mrproper.env file not found!")
-        logger.error("Current directory contents:")
-        for item in os.listdir('.'):
-            logger.error(f"  - {item}")
-        raise FileNotFoundError("mrproper.env file is required")
-    
+
+    # Verify environment variables are loaded (via --env-file at container start)
+    required_env_vars = ['GITLAB_ACCESS_TOKEN']
+    optional_env_vars = ['BFA_HOST', 'AI_SERVICE_URL', 'LOG_DIR', 'LOG_LEVEL', 'API_TIMEOUT']
+
+    logger.info("Checking environment variables:")
+    for var in required_env_vars:
+        value = os.environ.get(var)
+        if value:
+            logger.info(f"  ✓ {var} = {value[:15]}..." if len(value) > 15 else f"  ✓ {var} = {value}")
+        else:
+            logger.error(f"  ✗ {var} = NOT SET (REQUIRED!)")
+            raise EnvironmentError(f"Required environment variable {var} is not set")
+
+    for var in optional_env_vars:
+        value = os.environ.get(var)
+        if value:
+            # Mask sensitive values
+            if 'TOKEN' in var or 'KEY' in var:
+                logger.info(f"  ✓ {var} = {value[:15]}...")
+            else:
+                logger.info(f"  ✓ {var} = {value}")
+        else:
+            logger.info(f"  - {var} = NOT SET (optional)")
+
     try:
         subprocess.check_call(["docker", "version"])
         logger.info("Docker connectivity verified")
     except subprocess.CalledProcessError as e:
         logger.error(f"Docker connectivity failed: {e}")
         raise
-    
+
     logger.info("Starting webhook server on port 9912...")
     app.listen(9912)
     tornado.ioloop.IOLoop.instance().start()
