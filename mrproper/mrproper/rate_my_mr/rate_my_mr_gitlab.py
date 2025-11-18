@@ -90,14 +90,41 @@ slog.debug("Request Context",
            MR_IID=MR_IID)
 slog.debug("=" * 60)
 
-from .. import gitlab  # Import from parent directory (common module)
-from .rate_my_mr import (
-    generate_summary, generate_initial_code_review,
-    generate_lint_disable_report, cal_rating, print_banner,
-    cal_cc, cal_ss
-)
-from .loc import LOCCalculator
-from .config_loader import load_config, is_feature_enabled, get_loc_settings, get_cc_settings, get_security_settings, get_lint_settings, get_rating_settings, get_report_settings
+# Import dependencies with error handling
+slog.debug("Loading dependencies...")
+try:
+    from .. import gitlab  # Import from parent directory (common module)
+    slog.debug("✓ gitlab module loaded")
+except Exception as e:
+    slog.error("Failed to import gitlab module", error=str(e), error_type=type(e).__name__)
+    raise
+
+try:
+    from .rate_my_mr import (
+        generate_summary, generate_initial_code_review,
+        generate_lint_disable_report, cal_rating, print_banner,
+        cal_cc, cal_ss
+    )
+    slog.debug("✓ rate_my_mr module loaded")
+except Exception as e:
+    slog.error("Failed to import rate_my_mr functions", error=str(e), error_type=type(e).__name__)
+    raise
+
+try:
+    from .loc import LOCCalculator
+    slog.debug("✓ LOCCalculator loaded")
+except Exception as e:
+    slog.error("Failed to import LOCCalculator", error=str(e), error_type=type(e).__name__)
+    raise
+
+try:
+    from .config_loader import load_config, is_feature_enabled, get_loc_settings, get_cc_settings, get_security_settings, get_lint_settings, get_rating_settings, get_report_settings
+    slog.debug("✓ config_loader loaded")
+except Exception as e:
+    slog.error("Failed to import config_loader", error=str(e), error_type=type(e).__name__)
+    raise
+
+slog.debug("All dependencies loaded successfully")
 
 HEADER = """\
 :star2: MR Quality Rating Report :star2:
@@ -666,7 +693,13 @@ def main():
     """
     Entry point for GitLab-integrated rate-my-mr validator
     """
+    slog.info("=" * 60)
+    slog.info("MAIN FUNCTION CALLED")
+    slog.info("=" * 60)
+    slog.debug("Command line arguments", argv=sys.argv, argc=len(sys.argv))
+
     if len(sys.argv) != 3:
+        slog.error("Invalid arguments", expected=3, received=len(sys.argv), argv=sys.argv)
         print("Usage: rate-my-mr <project> <mr_iid>")
         print("Example: rate-my-mr my-org/my-project 123")
         sys.exit(1)
@@ -674,10 +707,14 @@ def main():
     proj = urllib.parse.quote(sys.argv[1], safe="")
     mriid = int(sys.argv[2])
 
+    slog.info("Starting MR analysis", project=sys.argv[1], project_encoded=proj, mr_iid=mriid)
+
     try:
         handle_mr(proj, mriid)
+        slog.info("MR analysis completed successfully", mr_iid=mriid)
         print(f"Successfully analyzed MR {mriid} in project {sys.argv[1]}")
     except Exception as e:
+        slog.error("MR analysis failed", mr_iid=mriid, error=str(e), error_type=type(e).__name__)
         print(f"Error analyzing MR {mriid}: {e}")
 
         # Post error to GitLab if possible
