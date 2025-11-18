@@ -60,12 +60,13 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
     """
     Send request to AI service with retry logic.
 
-    Automatically routes to new LLM adapter if BFA_HOST is configured,
-    otherwise uses legacy direct connection.
+    Routing priority:
+    1. BFA_HOST (new LLM adapter with JWT) - if set, always use this
+    2. AI_SERVICE_URL (legacy direct connection) - only if BFA_HOST not set
 
     Args:
         payload: JSON payload to send
-        url: AI service URL (ignored if using LLM adapter)
+        url: AI service URL (used only in legacy mode)
         max_retries: Maximum number of retry attempts (default: 3)
 
     Returns:
@@ -75,29 +76,32 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
     slog.info("=== SEND REQUEST CALLED ===")
     slog.info("=" * 50)
 
-    # Check if we should use the new LLM adapter
+    # Check routing: BFA_HOST takes priority over AI_SERVICE_URL
     bfa_host = os.environ.get('BFA_HOST')
+    ai_service_url = os.environ.get('AI_SERVICE_URL')
     use_adapter = HAS_LLM_ADAPTER and bfa_host
 
     slog.debug("AI Service routing decision",
                HAS_LLM_ADAPTER=HAS_LLM_ADAPTER,
-               BFA_HOST=bfa_host,
+               BFA_HOST=bfa_host if bfa_host else 'NOT_SET',
+               AI_SERVICE_URL=ai_service_url if ai_service_url else 'NOT_SET',
                use_adapter=use_adapter,
                url_provided=url)
 
     if use_adapter:
         slog.info("Routing to NEW LLM adapter (BFA_HOST configured)",
-                  bfa_host=bfa_host)
+                  bfa_host=bfa_host,
+                  note="BFA_HOST takes priority over AI_SERVICE_URL")
         result = llm_adapter.send_request(payload, url, max_retries)
         slog.info("LLM adapter returned",
                   status_code=result[0],
                   response_type=type(result[1]).__name__)
         return result
 
-    # Legacy direct connection (original implementation)
+    # Legacy direct connection (only if BFA_HOST not set)
     slog.info("Routing to LEGACY direct AI service connection",
               url=url,
-              bfa_host_not_set=True)
+              reason="BFA_HOST not set")
     slog.debug("Legacy connection parameters",
                url=url,
                payload_size=len(str(payload)),
