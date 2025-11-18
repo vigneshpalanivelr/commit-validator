@@ -94,7 +94,7 @@ slog.debug("=" * 60)
 slog.debug("Loading dependencies...")
 try:
     from .. import gitlab  # Import from parent directory (common module)
-    slog.debug("✓ gitlab module loaded")
+    slog.debug("[OK] gitlab module loaded")
 except Exception as e:
     slog.error("Failed to import gitlab module", error=str(e), error_type=type(e).__name__)
     raise
@@ -105,21 +105,21 @@ try:
         generate_lint_disable_report, cal_rating, print_banner,
         cal_cc, cal_ss
     )
-    slog.debug("✓ rate_my_mr module loaded")
+    slog.debug("[OK] rate_my_mr module loaded")
 except Exception as e:
     slog.error("Failed to import rate_my_mr functions", error=str(e), error_type=type(e).__name__)
     raise
 
 try:
     from .loc import LOCCalculator
-    slog.debug("✓ LOCCalculator loaded")
+    slog.debug("[OK] LOCCalculator loaded")
 except Exception as e:
     slog.error("Failed to import LOCCalculator", error=str(e), error_type=type(e).__name__)
     raise
 
 try:
     from .config_loader import load_config, is_feature_enabled, get_loc_settings, get_cc_settings, get_security_settings, get_lint_settings, get_rating_settings, get_report_settings
-    slog.debug("✓ config_loader loaded")
+    slog.debug("[OK] config_loader loaded")
 except Exception as e:
     slog.error("Failed to import config_loader", error=str(e), error_type=type(e).__name__)
     raise
@@ -619,13 +619,14 @@ Please check the MR manually and retry if necessary.
             print_banner(f"[{REQUEST_ID_SHORT}] Cyclomatic Complexity Analysis")
             cc_settings = get_cc_settings(config)
             try:
-                cc_data = cal_cc(diff_file_path)
-                if cc_data:
+                cc_success, cc_data = cal_cc(diff_file_path)
+                if cc_success and cc_data:
                     slog.info("Cyclomatic complexity completed",
                               avg_cc=cc_data.get('avg_cc', 0),
                               methods=len(cc_data.get('method_wise_cc', {})),
                               max_average=cc_settings.get('max_average', 10))
                 else:
+                    slog.warning("Cyclomatic complexity failed", success=cc_success)
                     cc_data = {}
             except Exception as cc_error:
                 slog.warning("Cyclomatic complexity failed", error=str(cc_error))
@@ -640,8 +641,8 @@ Please check the MR manually and retry if necessary.
             print_banner(f"[{REQUEST_ID_SHORT}] Security Scan Analysis")
             security_settings = get_security_settings(config)
             try:
-                ss_data = cal_ss(diff_file_path)
-                if ss_data:
+                ss_success, ss_data = cal_ss(diff_file_path)
+                if ss_success and ss_data:
                     severity = ss_data.get('severity_count', {})
                     slog.info("Security scan completed",
                               high=severity.get('HIGH', 0),
@@ -649,6 +650,7 @@ Please check the MR manually and retry if necessary.
                               low=severity.get('LOW', 0),
                               fail_on_high=security_settings.get('fail_on_high', True))
                 else:
+                    slog.warning("Security scan failed", success=ss_success)
                     ss_data = {}
             except Exception as ss_error:
                 slog.warning("Security scan failed", error=str(ss_error))

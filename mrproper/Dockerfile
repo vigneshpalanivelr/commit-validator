@@ -23,12 +23,11 @@ RUN wget -O/tmp/cf.deb https://jenkins.internal.com/debian/dists/squeeze/non-fre
 RUN mkdir /src
 ADD . /src/
 
-# Install Python dependencies from requirements.txt
-COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install -r /tmp/requirements.txt
-
 # Install the mrproper package
 RUN cd /src; python3 ./setup.py install
+
+# Install Python dependencies
+RUN pip3 install radon prettytable certifi requests urllib3 pyyaml bandit
 
 RUN useradd -ms /bin/bash mrcheck
 USER mrcheck
