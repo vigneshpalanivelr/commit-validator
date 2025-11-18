@@ -523,8 +523,10 @@ Please check the MR manually and retry if necessary.
         slog.debug("Step 1: Generating AI summary")
         if is_feature_enabled(config, 'ai_summary'):
             summary_success, summary_content = generate_summary(diff_file_path)
-            slog.info("AI summary completed", success=summary_success)
-            if not summary_success:
+            if summary_success:
+                slog.info("AI summary succeeded")
+            else:
+                slog.info("AI summary failed", success=False)
                 summary_content = ""
         else:
             slog.info("AI summary skipped (disabled in config)")
@@ -535,8 +537,10 @@ Please check the MR manually and retry if necessary.
         slog.debug("Step 2: Generating AI code review")
         if is_feature_enabled(config, 'ai_code_review'):
             review_success, review_content = generate_initial_code_review(diff_file_path)
-            slog.info("AI code review completed", success=review_success)
-            if not review_success:
+            if review_success:
+                slog.info("AI code review succeeded")
+            else:
+                slog.info("AI code review failed", success=False)
                 review_content = ""
         else:
             slog.info("AI code review skipped (disabled in config)")
