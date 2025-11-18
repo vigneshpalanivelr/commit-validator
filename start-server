@@ -2,6 +2,7 @@
 
 here=$(realpath "$(dirname "$0")")
 
+# Check for mrproper.env file
 if ! [ -f "$here/mrproper.env" ]; then
 	echo "ERROR: Please create a mrproper.env file containing:"
 	echo "       GITLAB_ACCESS_TOKEN=thesecrettoken"
@@ -11,23 +12,66 @@ fi
 # Handle restart argument
 if [ "$1" = "restart" ]; then
 	echo "Stopping existing mrproper-webhook-vp-test containers..."
-	docker ps --filter "ancestor=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker stop
+	# Updated to also check by name
+    docker ps --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker stop
 	echo "Removing stopped mrproper-webhook-vp-test containers..."
-	docker ps -a --filter "ancestor=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker rm
+    docker ps -a --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker rm
+
+    # Also check if any other container is using port 9912 and offer to stop it
+    port_containers=$(docker ps --format "{{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}" | grep ":9912->")
+    if [ -n "$port_containers" ]; then
+        echo "WARNING: Other containers are still using port 9912:"
+        echo "$port_containers" | awk 'BEGIN{print "CONTAINER ID\tIMAGE\t\t\tNAMES\t\tPORTS"} {print}'
+        echo ""
+        read -p "Do you want to stop these containers too? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "$port_containers" | awk '{print $1}' | xargs -r docker stop
+            echo "Stopped containers using port 9912"
+        else
+            echo "Port 9912 is still in use. Exiting."
+            exit 1
+        fi
+    fi
 fi
 
-# Check if mrproper-webhook-vp-test is already running
-if docker ps --filter "ancestor=mrproper-webhook-vp-test" --format "{{.ID}}" | grep -q .; then
+# Check if mrproper-webhook-vp-test is already running (by name)
+if docker ps --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | grep -q .; then
 	echo "ERROR: mrproper-webhook-vp-test container is already running"
 	echo "Running mrproper-webhook-vp-test containers:"
-	docker ps --filter "ancestor=mrproper-webhook-vp-test" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}"
+    docker ps --filter "name=mrproper-webhook-vp-test" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}"
 	echo ""
 	echo "Use '$0 restart' to stop existing mrproper-webhook-vp-test containers and restart"
 	exit 1
 fi
 
+# Check if port 9912 is in use by any container
+port_check=$(docker ps --format "{{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}" | grep ":9912->")
+if [ -n "$port_check" ]; then
+    echo "ERROR: Port 9912 is already in use by another container:"
+    echo "$port_check" | awk 'BEGIN{print "CONTAINER ID\tIMAGE\t\t\tNAMES\t\tPORTS"} {print}'
+    echo ""
+    echo "Please stop the conflicting container first, or use '$0 restart' to handle it automatically"
+    exit 1
+fi
+
 echo "Starting mrproper-webhook server on port 9912..."
-docker run -d --restart=unless-stopped --publish 9912:9912 -t \
+docker run -d \
+	--name mrproper-webhook-vp-test \
+	--restart=unless-stopped \
+	--publish 9912:9912 \
+	-t \
 	--env-file "$here/mrproper.env" \
 	--volume /var/run/docker.sock:/var/run/docker.sock \
 	mrproper-webhook-vp-test
+
+# Verify the container started successfully
+sleep 2
+if docker ps --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | grep -q .; then
+    echo "✓ Container started successfully!"
+    docker ps --filter "name=mrproper-webhook-vp-test" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}\t{{.Status}}"
+else
+    echo "✗ Container failed to start. Check logs:"
+    echo "docker logs mrproper-webhook-vp-test"
+    exit 1
+fi

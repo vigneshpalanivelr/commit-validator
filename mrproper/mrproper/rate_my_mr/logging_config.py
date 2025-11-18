@@ -35,7 +35,7 @@ class AlignedPipeFormatter(logging.Formatter):
 
     # Column widths for alignment
     LEVEL_WIDTH = 8
-    MODULE_WIDTH = 20
+    MODULE_WIDTH = 15
     CORRELATION_WIDTH = 8
 
     # Map long module names to short, readable names
@@ -53,7 +53,7 @@ class AlignedPipeFormatter(logging.Formatter):
     def __init__(self):
         # Format with milliseconds
         super().__init__(
-            fmt='%(asctime)s.%(msecs)03d | %(levelname)-8s | %(module_name)-20s | %(correlation_id)-8s | %(message)s',
+            fmt='%(asctime)s.%(msecs)03d | %(levelname)-8s | %(module_name)-15s | %(correlation_id)-8s | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
 
