@@ -27,4 +27,7 @@ if docker ps --filter "ancestor=mrproper-webhook-vp-test" --format "{{.ID}}" | g
 fi
 
 echo "Starting mrproper-webhook server on port 9912..."
-docker run -d --restart=unless-stopped --publish 9912:9912 -t --volume /var/run/docker.sock:/var/run/docker.sock --volume "$here/mrproper.env:/mrproper.env" mrproper-webhook-vp-test
+docker run -d --restart=unless-stopped --publish 9912:9912 -t \
+	--env-file "$here/mrproper.env" \
+	--volume /var/run/docker.sock:/var/run/docker.sock \
+	mrproper-webhook-vp-test

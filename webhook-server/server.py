@@ -87,20 +87,36 @@ class GitLabWebHookHandler(tornado.web.RequestHandler):
                 for i, c in enumerate(checkers):
                     logger.info(f"[{request_id_short}] Starting checker {i+1}/{len(checkers)}: {c}")
 
-                    # Get logging configuration from environment
+                    # Get configuration from environment
                     log_dir = os.environ.get('LOG_DIR', '/home/docker/tmp/mr-validator-logs')
                     log_level = os.environ.get('LOG_LEVEL', 'DEBUG')
                     log_max_bytes = os.environ.get('LOG_MAX_BYTES', '52428800')
                     log_backup_count = os.environ.get('LOG_BACKUP_COUNT', '3')
                     log_structure = os.environ.get('LOG_STRUCTURE', 'organized')
 
+                    # Get AI/LLM configuration
+                    gitlab_token = os.environ.get('GITLAB_ACCESS_TOKEN', '')
+                    bfa_host = os.environ.get('BFA_HOST', '')
+                    bfa_token_key = os.environ.get('BFA_TOKEN_KEY', '')
+                    ai_service_url = os.environ.get('AI_SERVICE_URL', '')
+                    api_timeout = os.environ.get('API_TIMEOUT', '120')
+
+                    logger.debug(f"[{request_id_short}] Env vars to pass: BFA_HOST={bfa_host if bfa_host else 'NOT_SET'} AI_SERVICE_URL={ai_service_url if ai_service_url else 'NOT_SET'} API_TIMEOUT={api_timeout}")
+
                     docker_cmd = [
                         "docker", "run", "-d", "--rm",
-                        "--env-file", "mrproper.env",
+                        # Context variables
                         "--env", f"REQUEST_ID={request_id}",
                         "--env", f"PROJECT_ID={data.project.path_with_namespace}",
                         "--env", f"MR_IID={data.object_attributes.iid}",
-                        # Pass logging configuration
+                        # GitLab configuration
+                        "--env", f"GITLAB_ACCESS_TOKEN={gitlab_token}",
+                        # AI/LLM configuration (BFA_HOST takes priority)
+                        "--env", f"BFA_HOST={bfa_host}",
+                        "--env", f"BFA_TOKEN_KEY={bfa_token_key}",
+                        "--env", f"AI_SERVICE_URL={ai_service_url}",
+                        "--env", f"API_TIMEOUT={api_timeout}",
+                        # Logging configuration
                         "--env", f"LOG_DIR={log_dir}",
                         "--env", f"LOG_LEVEL={log_level}",
                         "--env", f"LOG_MAX_BYTES={log_max_bytes}",
