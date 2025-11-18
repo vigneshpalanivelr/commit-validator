@@ -62,13 +62,27 @@ class AlignedPipeFormatter(logging.Formatter):
         request_id = os.environ.get('REQUEST_ID', 'unknown')
         record.correlation_id = request_id.split('_')[-1][:8] if request_id != 'unknown' else 'unknown'
 
-        # Add module name (instead of filename)
-        # Use logger name if available, otherwise module name
-        module_name = record.name if record.name else record.module
+        # Get module name from logger name (more reliable than module attribute)
+        module_name = record.name
 
-        # Map long module names to short readable names
-        if module_name in self.MODULE_NAME_MAP:
-            module_name = self.MODULE_NAME_MAP[module_name]
+        # Map long module names to short readable names using direct prefix matching
+        # This is more robust than exact matching
+        if module_name.startswith('mrproper.rate_my_mr.rate_my_mr'):
+            module_name = 'rate-my-mr'
+        elif module_name.startswith('mrproper.rate_my_mr.llm_adapter'):
+            module_name = 'llm-adapter'
+        elif module_name.startswith('mrproper.rate_my_mr.loc'):
+            module_name = 'loc-analyzer'
+        elif module_name.startswith('mrproper.rate_my_mr.cyclomatic_complexity'):
+            module_name = 'cc-analyzer'
+        elif module_name.startswith('mrproper.rate_my_mr.security_scan'):
+            module_name = 'security-scan'
+        elif module_name.startswith('mrproper.rate_my_mr.cal_rating'):
+            module_name = 'rating-calc'
+        elif module_name.startswith('mrproper.rate_my_mr.config_loader'):
+            module_name = 'config-loader'
+        elif module_name.startswith('mrproper.rate_my_mr.logging_config'):
+            module_name = 'logging'
         elif module_name.startswith('validator.'):
             # Main validator logger: validator.20251117_101804_715563 -> main
             module_name = 'main'
