@@ -69,6 +69,27 @@ def configure_child_loggers():
 
 configure_child_loggers()
 
+# Debug: Log all environment variables related to AI/LLM configuration
+slog.debug("=" * 60)
+slog.debug("ENVIRONMENT VARIABLES DEBUG")
+slog.debug("=" * 60)
+slog.debug("AI/LLM Configuration",
+           BFA_HOST=os.environ.get('BFA_HOST', 'NOT_SET'),
+           BFA_TOKEN_KEY=f"{os.environ.get('BFA_TOKEN_KEY', 'NOT_SET')[:20]}..." if os.environ.get('BFA_TOKEN_KEY') else 'NOT_SET',
+           AI_SERVICE_URL=os.environ.get('AI_SERVICE_URL', 'NOT_SET'),
+           API_TIMEOUT=os.environ.get('API_TIMEOUT', 'NOT_SET'))
+slog.debug("GitLab Configuration",
+           GITLAB_ACCESS_TOKEN=f"{os.environ.get('GITLAB_ACCESS_TOKEN', 'NOT_SET')[:15]}..." if os.environ.get('GITLAB_ACCESS_TOKEN') else 'NOT_SET')
+slog.debug("Logging Configuration",
+           LOG_DIR=os.environ.get('LOG_DIR', 'NOT_SET'),
+           LOG_LEVEL=os.environ.get('LOG_LEVEL', 'NOT_SET'),
+           LOG_STRUCTURE=os.environ.get('LOG_STRUCTURE', 'NOT_SET'))
+slog.debug("Request Context",
+           REQUEST_ID=REQUEST_ID,
+           PROJECT_ID=PROJECT_ID,
+           MR_IID=MR_IID)
+slog.debug("=" * 60)
+
 from .. import gitlab  # Import from parent directory (common module)
 from .rate_my_mr import (
     generate_summary, generate_initial_code_review,
