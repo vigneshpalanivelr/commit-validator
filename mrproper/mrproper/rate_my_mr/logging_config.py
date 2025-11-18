@@ -35,7 +35,7 @@ class AlignedPipeFormatter(logging.Formatter):
 
     # Column widths for alignment
     LEVEL_WIDTH = 8
-    MODULE_WIDTH = 30
+    MODULE_WIDTH = 20
     CORRELATION_WIDTH = 8
 
     # Map long module names to short, readable names
@@ -53,7 +53,7 @@ class AlignedPipeFormatter(logging.Formatter):
     def __init__(self):
         # Format with milliseconds
         super().__init__(
-            fmt='%(asctime)s.%(msecs)03d | %(levelname)-8s | %(module_name)-30s | %(correlation_id)-8s | %(message)s',
+            fmt='%(asctime)s.%(msecs)03d | %(levelname)-8s | %(module_name)-20s | %(correlation_id)-8s | %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
 
@@ -190,21 +190,19 @@ class LogConfig:
                 container_id = os.environ.get('HOSTNAME', 'unknown')
                 return base / f'gitlab-api-{request_id_short}-{container_id}.log'
         else:
-            # Organized structure by date and project
-            today = datetime.now().strftime('%Y-%m-%d')
-
+            # Organized structure by project (no date folder)
             if log_type == 'webhook':
-                # Webhook logs go to dated directory
-                log_dir = base / 'webhook' / today
+                # Webhook logs go to webhook directory
+                log_dir = base / 'webhook'
                 log_dir.mkdir(parents=True, exist_ok=True)
                 return log_dir / 'webhook-server.log'
 
             elif log_type == 'validator' or log_type == 'gitlab-api':
-                # Validator logs organized by date/project/mr
+                # Validator logs organized by project/mr (no date folder)
                 if project and mr_iid:
                     # Sanitize project name for filesystem
                     safe_project = project.replace('/', '_').replace('%2F', '_')
-                    log_dir = base / 'validations' / today / safe_project / f'mr-{mr_iid}'
+                    log_dir = base / 'validations' / safe_project / f'mr-{mr_iid}'
                     log_dir.mkdir(parents=True, exist_ok=True)
 
                     request_id_short = request_id.split('_')[-1][:8] if request_id else 'unknown'
