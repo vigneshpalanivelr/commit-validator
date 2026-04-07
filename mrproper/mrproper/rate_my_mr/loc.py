@@ -14,14 +14,21 @@ class LOCCalculator:
         removed_code = []
         with open(self.diff_file, 'r') as file:
             for line in file:
-                # Check for the start of a code block
+                # Skip diff file headers (must come before +/- checks)
                 if line.startswith('+++') or line.startswith('---'):
                     continue
-                if line.startswith('+') and not line.startswith('+++'):
+                if line.startswith('+'):
                     modified_code.append(line[1:])  # Remove the '+' sign
-                if line.startswith("-"):
+                elif line.startswith('-'):
                     removed_code.append(line[1:])
         return ''.join(modified_code), "".join(removed_code)
+
+    def _count_raw_lines(self, text):
+        """
+        Language-agnostic fallback: count non-empty, non-whitespace-only lines.
+        Used when radon cannot parse the content (non-Python diffs).
+        """
+        return sum(1 for ln in text.splitlines() if ln.strip())
 
     def get_radon_raw_metrics(self, file_path):
         # Analyze the file and get the raw metrics
@@ -67,9 +74,26 @@ class LOCCalculator:
             removed_file.write(removed_code)
             removed_file.close()
 
-            # Analyze the temporary files
-            added_lines = self.get_radon_raw_metrics(modified_file.name)
-            removed_lines = self.get_radon_raw_metrics(removed_file.name)
+            # Analyze the temporary files. radon.raw.analyze only handles
+            # Python; for non-Python diffs (yaml/go/js/...) it raises
+            # SyntaxError. Fall back to a simple non-empty line count so the
+            # LOC metric remains meaningful for any language.
+            try:
+                added_sloc = self.get_radon_raw_metrics(modified_file.name).sloc
+            except Exception:
+                added_sloc = self._count_raw_lines(modified_code)
+
+            try:
+                removed_sloc = self.get_radon_raw_metrics(removed_file.name).sloc
+            except Exception:
+                removed_sloc = self._count_raw_lines(removed_code)
+
+            # Shim objects so the rest of the function is unchanged
+            class _M:
+                def __init__(self, sloc):
+                    self.sloc = sloc
+            added_lines = _M(added_sloc)
+            removed_lines = _M(removed_sloc)
             net_change = added_lines.sloc - removed_lines.sloc
 
             # Create a PrettyTable object

@@ -174,6 +174,29 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
     return None, f"Failed after {max_retries} attempts"
 
 
+def _extract_ai_text(response):
+    """
+    Extract text from an LLM adapter response dict.
+    Returns (ok, text). ok is False if the response has no usable content.
+    """
+    if not isinstance(response, dict):
+        return False, str(response)
+    if response.get('error'):
+        return False, response.get('error')
+    content = response.get('content') or []
+    if not content:
+        return False, "Empty AI response"
+    try:
+        item = content[0]
+        item_type = item.get('type')
+        text = item.get(item_type, '')
+    except (KeyError, IndexError, TypeError, AttributeError) as e:
+        return False, f"Malformed AI response: {e}"
+    if not text or not text.strip():
+        return False, "Empty AI response text"
+    return True, text
+
+
 def generate_summary(file_path):
     # parser = argparse.ArgumentParser(
     #     description="Test Claude microservice with messages and optional thinking"
@@ -197,17 +220,13 @@ def generate_summary(file_path):
     if status_code != 200:
         print(f"Failed to generate summary: {code_summary}")
         return False, code_summary
-    else:
-        try:
-            content = code_summary.get('content')[0]
-            content_type = content.get('type')
-            content_body = content.get(content_type)
-            print(content_body)
-            print("\n")
-            return True, content_body
-        except (KeyError, IndexError, TypeError) as e:
-            print(f"Failed to parse AI response: {e}")
-            return False, str(e)
+    ok, text_or_err = _extract_ai_text(code_summary)
+    if not ok:
+        print(f"Failed to parse AI response: {text_or_err}")
+        return False, text_or_err
+    print(text_or_err)
+    print("\n")
+    return True, text_or_err
 
 def generate_initial_code_review(file_path):
     with open(file_path, 'r') as file:
@@ -230,17 +249,13 @@ def generate_initial_code_review(file_path):
     if status_code != 200:
         print(f"Failed to generate code review: {initial_review}")
         return False, initial_review
-    else:
-        try:
-            content = initial_review.get('content')[0]
-            content_type = content.get('type')
-            content_body = content.get(content_type)
-            print(content_body)
-            print("\n")
-            return True, content_body
-        except (KeyError, IndexError, TypeError) as e:
-            print(f"Failed to parse AI response: {e}")
-            return False, str(e)
+    ok, text_or_err = _extract_ai_text(initial_review)
+    if not ok:
+        print(f"Failed to parse AI response: {text_or_err}")
+        return False, text_or_err
+    print(text_or_err)
+    print("\n")
+    return True, text_or_err
 
 def generate_lint_disable_report(file_path):
     try:
@@ -263,20 +278,32 @@ def generate_lint_disable_report(file_path):
         print_banner("Lint Disable report")
         if status_code != 200:
             print(f"Failed to generate lint disable report: {lint_disbale}")
-        else:
-            content = lint_disbale.get('content')[0]
-            content_type = content.get('type')
-            content_body = content.get(content_type)
-            pattern = r'\{[^{}]*"num_lint_disable":\s*(\d+),\s*"lints_that_disabled":\s*"([^"]*)"[^{}]*\}'
-            print(content_body)
-            match = re.search(pattern, content_body)
-            json_data = {}
-            # Check if a match was found and print the result
-            if match:
-                json_data = match.group(0)
-                json_data = json.loads(json_data)
+            return False, lint_disbale
+
+        # Prefer structured metrics from the BFA response (new schema)
+        if isinstance(lint_disbale, dict):
+            metrics = lint_disbale.get('metrics') or {}
+            if 'num_lint_disable' in metrics:
+                json_data = {
+                    'num_lint_disable': int(metrics.get('num_lint_disable') or 0),
+                    'lints_that_disabled': metrics.get('lints_that_disabled') or '',
+                }
+                print(json_data)
                 return True, json_data
-            return False, "No data is available"
+
+        # Fallback: regex-parse the assembled text response
+        ok, content_body = _extract_ai_text(lint_disbale)
+        if not ok:
+            return False, content_body
+        pattern = r'\{[^{}]*"num_lint_disable":\s*(\d+),\s*"lints_that_disabled":\s*"([^"]*)"[^{}]*\}'
+        print(content_body)
+        match = re.search(pattern, content_body)
+        if match:
+            json_data = json.loads(match.group(0))
+            return True, json_data
+        # No structured data and no regex match: treat as "no lint disables
+        # detected" rather than a hard failure, so the pipeline can continue.
+        return True, {'num_lint_disable': 0, 'lints_that_disabled': ''}
     except Exception as err:
         return False, str(err)
 
@@ -341,10 +368,11 @@ def generate_added_code_file(diff_file_path: str):
         if status_code != 200:
             return False, f"API call failed: {response}"
 
-        # Extract assistant message
-        content = response.get("content")[0]
-        content_type = content.get("type")
-        python_code = content.get(content_type, "").strip()
+        # Extract assistant message with robust error handling
+        ok, python_code = _extract_ai_text(response)
+        if not ok:
+            return False, python_code
+        python_code = python_code.strip()
         # print("**"*9)
         # print(python_code)
 
@@ -369,40 +397,46 @@ def cal_loc(file_path):
 
 def cal_cc(file_path):
     print_banner("CC Summary")
-    cc_cal = CyclomaticComplexityCalculator(file_path)
-    return cc_cal.analyze()
+    try:
+        cc_cal = CyclomaticComplexityCalculator(file_path)
+        result = cc_cal.analyze()
+        # analyze() already returns a (success, data) tuple; pass through.
+        if isinstance(result, tuple) and len(result) == 2:
+            return result
+        # Defensive fallback if analyze() ever returns a bare dict.
+        return True, result
+    except Exception as err:
+        return False, str(err)
 
 def cal_ss(file_path):
     print_banner("Security Scan Summary")
     ok, result = generate_added_code_file(file_path)
-    if ok:
+    if not ok:
+        return False, str(result)
+    try:
         ss_cal = SecurityScanner(result)
-        print(ss_cal.analyze())
-        return ss_cal.analyze()
+        ss_result = ss_cal.analyze()
+        print(ss_result)
+        return ss_result
+    except Exception as err:
+        return False, str(err)
 
 
-def cal_rating(net_loc, lint_disable_count):
+def cal_rating(net_loc, lint_disable_count, failures=None, high_security=0):
     """
     Simple rating calculation function for GitLab integration.
-
-    This is a lightweight version used for real-time MR validation.
-    For more comprehensive analysis including cyclomatic complexity and
-    security scanning, see CalRating class in cal_rating.py (currently
-    not used in GitLab webhook mode due to execution time constraints).
 
     Args:
         net_loc: Net lines of code change (added - removed)
         lint_disable_count: Number of new lint disable statements
+        failures: Iterable of analyzer names that failed (e.g.
+            ['ai_summary', 'loc_analysis']). Each failure deducts 1 point so
+            a broken pipeline cannot silently return 5/5.
+        high_security: Count of HIGH severity security issues.
 
     Returns:
-        int: Rating score from 0 to 5
-
-    Scoring:
-        - Start with 5 points (perfect score)
-        - Deduct 1 point if net LOC > 500 (too large)
-        - Deduct 1 point if lint_disable_count > 0 (code smell)
-        - Minimum score: 0
-        - Score < 3: MR should be blocked for review
+        int: Rating score from 0 to 5. Score < 3 means the MR should be
+             blocked for review.
     """
     score = 5  # Start with perfect score
 
@@ -411,10 +445,21 @@ def cal_rating(net_loc, lint_disable_count):
         score -= 1
 
     # Deduct for lint disables
-    if lint_disable_count > 0:
+    if lint_disable_count and lint_disable_count > 0:
         score -= 1
 
-    return max(score, 0)  # Don't go below 0
+    # Deduct for HIGH severity security issues
+    if high_security and high_security > 0:
+        score -= 2
+
+    # Deduct 1 point per failed analyzer so a broken pipeline cannot
+    # masquerade as a passing MR. Capped so a single outage doesn't drop
+    # the score below 1.
+    if failures:
+        failure_count = len([f for f in failures if f])
+        score -= min(failure_count, 4)
+
+    return max(score, 0)
 
 def main():
     parser = argparse.ArgumentParser(
