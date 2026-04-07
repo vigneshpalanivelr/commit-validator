@@ -4,27 +4,44 @@ Automated MR validation with AI-powered code review, security scanning, and qual
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
-  - [Prerequisites](#prerequisites)
-  - [Build & Install](#build--install)
-  - [Configure](#configure)
-  - [Run](#run)
-  - [Configure GitLab Webhook](#configure-gitlab-webhook)
-- [Configuration](#configuration)
-  - [Environment Variables](#environment-variables-envexample)
-  - [Repository Configuration](#repository-configuration-rate-my-mryaml)
-  - [Webhook URL Patterns](#webhook-url-patterns)
-- [Validators](#validators)
-  - [AI Quality Assessment](#ai-quality-assessment-rate-my-mr)
-  - [Code Formatting](#code-formatting-mrproper-clang-format)
-  - [Commit Message](#commit-message-mrproper-message)
-- [Troubleshooting](#troubleshooting)
-  - [Quick Diagnostics](#quick-diagnostics)
-  - [Common Issues](#common-issues)
-  - [Debug by REQUEST_ID](#debug-by-request_id)
-  - [Log Module Names](#log-module-names)
-- [Documentation](#documentation)
-- [License](#license)
+- [MR Validator - GitLab Merge Request Quality Assessment](#mr-validator---gitlab-merge-request-quality-assessment)
+  - [Table of Contents](#table-of-contents)
+  - [Quick Start](#quick-start)
+    - [Prerequisites](#prerequisites)
+    - [Build \& Install](#build--install)
+    - [Configure](#configure)
+    - [Run](#run)
+    - [Configure GitLab Webhook](#configure-gitlab-webhook)
+  - [Configuration](#configuration)
+    - [Environment Variables (.env.example)](#environment-variables-envexample)
+      - [Required Variables](#required-variables)
+      - [AI/LLM Service Variables](#aillm-service-variables)
+      - [Logging Variables](#logging-variables)
+      - [Auto-Set Variables (by system)](#auto-set-variables-by-system)
+      - [Production Configuration Examples](#production-configuration-examples)
+    - [Repository Configuration (.rate-my-mr.yaml)](#repository-configuration-rate-my-mryaml)
+      - [Example Configurations](#example-configurations)
+    - [Webhook URL Patterns](#webhook-url-patterns)
+  - [Validators](#validators)
+    - [AI Quality Assessment (rate-my-mr)](#ai-quality-assessment-rate-my-mr)
+    - [Code Formatting (mrproper-clang-format)](#code-formatting-mrproper-clang-format)
+    - [Commit Message (mrproper-message)](#commit-message-mrproper-message)
+  - [Troubleshooting](#troubleshooting)
+    - [Quick Diagnostics](#quick-diagnostics)
+    - [Common Issues](#common-issues)
+    - [Debug by REQUEST\_ID](#debug-by-request_id)
+    - [Log Module Names](#log-module-names)
+      - [Scenario 1: Container Starts But Fails Immediately](#scenario-1-container-starts-but-fails-immediately)
+      - [Scenario 2: Container Never Starts](#scenario-2-container-never-starts)
+      - [Scenario 3: Container Runs But AI Service Fails](#scenario-3-container-runs-but-ai-service-fails)
+      - [Scenario 4: Container Runs But No GitLab Comment](#scenario-4-container-runs-but-no-gitlab-comment)
+      - [Scenario 5: Container Stuck/Hanging](#scenario-5-container-stuckhanging)
+      - [Scenario 6: LLM Adapter (JWT Token) Issues](#scenario-6-llm-adapter-jwt-token-issues)
+      - [Log Directory Structure (Organized Mode)](#log-directory-structure-organized-mode)
+      - [Viewing and Analyzing Logs](#viewing-and-analyzing-logs)
+      - [Troubleshooting Checklist](#troubleshooting-checklist)
+  - [Documentation](#documentation)
+  - [License](#license)
 
 ---
 
@@ -40,6 +57,11 @@ Automated MR validation with AI-powered code review, security scanning, and qual
 ```bash
 # Build Docker images
 ./build-docker-images
+
+# Start container
+./start-server
+# Restart container (env changes)
+./start-server restart
 ```
 
 **Expected output:**

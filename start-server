@@ -16,7 +16,7 @@ if [ "$1" = "restart" ]; then
     docker ps --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker stop
 	echo "Removing stopped mrproper-webhook-vp-test containers..."
     docker ps -a --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker rm
-
+    
     # Also check if any other container is using port 9912 and offer to stop it
     port_containers=$(docker ps --format "{{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}" | grep ":9912->")
     if [ -n "$port_containers" ]; then
