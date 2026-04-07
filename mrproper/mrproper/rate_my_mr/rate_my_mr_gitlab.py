@@ -209,7 +209,7 @@ def create_diff_from_mr(proj, mriid, checkout_dir, mr_data, mrcommits):
             return None
 
 
-def format_rating_report(summary_success, summary_content, review_success, review_content, loc_data, lint_data, cc_data, ss_data, rating_score):
+def format_rating_report(summary_success, summary_content, review_success, review_content, loc_data, lint_data, cc_data, ss_data, rating_score, failed_analyzers=None):
     """
     Format the complete rating report for GitLab discussion
 
@@ -228,6 +228,8 @@ def format_rating_report(summary_success, summary_content, review_success, revie
         tuple: (report_body, must_not_be_resolved)
     """
 
+    failed_analyzers = failed_analyzers or []
+
     # Rating visualization (without stars emoji repetition)
     report = f"""
 ## Overall Rating: {rating_score}/5
@@ -237,8 +239,11 @@ def format_rating_report(summary_success, summary_content, review_success, revie
 #### :mag: Summary Analysis
 """
 
-    if summary_success and summary_content:
-        report += f":white_check_mark: AI-powered summary generated successfully\n\n"
+    # Only claim success when we actually have non-empty content AND the call
+    # reported success. This prevents showing ":white_check_mark: generated
+    # successfully" above an error string from the BFA adapter.
+    if summary_success and summary_content and str(summary_content).strip():
+        report += ":white_check_mark: AI-powered summary generated successfully\n\n"
         report += f"<details>\n<summary>Click to expand AI Summary</summary>\n\n{summary_content}\n\n</details>\n"
     else:
         report += ":x: Summary generation failed - check AI service connectivity\n"
@@ -247,8 +252,8 @@ def format_rating_report(summary_success, summary_content, review_success, revie
 #### :microscope: Code Review Analysis
 """
 
-    if review_success and review_content:
-        report += f":white_check_mark: Comprehensive AI code review completed\n\n"
+    if review_success and review_content and str(review_content).strip():
+        report += ":white_check_mark: Comprehensive AI code review completed\n\n"
         report += f"<details>\n<summary>Click to expand AI Code Review</summary>\n\n{review_content}\n\n</details>\n"
     else:
         report += ":x: Code review analysis failed - check AI service connectivity\n"
@@ -336,8 +341,18 @@ def format_rating_report(summary_success, summary_content, review_success, revie
 
 """
 
-    # Determine if MR should be blocked
-    must_not_be_resolved = rating_score < 3  # Block if score < 3
+    # Surface any analyzer failures so reviewers know the report is partial.
+    if failed_analyzers:
+        report += "#### :warning: Analyzer Failures\n"
+        report += ("The following analyzers did not run successfully and their "
+                   "results should not be trusted:\n")
+        for name in failed_analyzers:
+            report += f"- `{name}`\n"
+        report += "\nCheck the validator logs for details.\n\n"
+
+    # Determine if MR should be blocked. Block on low score OR on any
+    # analyzer failure so a broken pipeline never auto-resolves a discussion.
+    must_not_be_resolved = rating_score < 3 or bool(failed_analyzers)
 
     if must_not_be_resolved:
         report += """
@@ -546,6 +561,10 @@ Please check the MR manually and retry if necessary.
         print_banner(f"[{REQUEST_ID_SHORT}] Starting Analysis Pipeline")
         slog.info("Analysis pipeline started")
 
+        # Track which analyzers actually failed so cal_rating can penalize
+        # and the report can surface real status.
+        failed_analyzers = []
+
         # 1. Generate AI summary (if enabled)
         slog.debug("Step 1: Generating AI summary")
         if is_feature_enabled(config, 'ai_summary'):
@@ -553,7 +572,8 @@ Please check the MR manually and retry if necessary.
             if summary_success:
                 slog.info("AI summary succeeded")
             else:
-                slog.info("AI summary failed", success=False)
+                slog.warning("AI summary failed", error=str(summary_content)[:200])
+                failed_analyzers.append('ai_summary')
                 summary_content = ""
         else:
             slog.info("AI summary skipped (disabled in config)")
@@ -567,7 +587,8 @@ Please check the MR manually and retry if necessary.
             if review_success:
                 slog.info("AI code review succeeded")
             else:
-                slog.info("AI code review failed", success=False)
+                slog.warning("AI code review failed", error=str(review_content)[:200])
+                failed_analyzers.append('ai_code_review')
                 review_content = ""
         else:
             slog.info("AI code review skipped (disabled in config)")
@@ -584,6 +605,7 @@ Please check the MR manually and retry if necessary.
 
             if not loc_success:
                 slog.warning("LOC analysis failed", error=loc_data)
+                failed_analyzers.append('loc_analysis')
                 loc_data = {'lines_of_code_added': 0, 'lines_of_code_removed': 0, 'net_lines_of_code_change': 0}
             else:
                 slog.info("LOC analysis completed",
@@ -603,6 +625,7 @@ Please check the MR manually and retry if necessary.
 
             if not lint_success:
                 slog.warning("Lint analysis failed", error=lint_data)
+                failed_analyzers.append('lint_disable_check')
                 lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
             else:
                 slog.info("Lint analysis completed",
@@ -619,17 +642,26 @@ Please check the MR manually and retry if necessary.
             print_banner(f"[{REQUEST_ID_SHORT}] Cyclomatic Complexity Analysis")
             cc_settings = get_cc_settings(config)
             try:
-                cc_success, cc_data = cal_cc(diff_file_path)
-                if cc_success and cc_data:
+                cc_result = cal_cc(diff_file_path)
+                # Defensive: cal_cc now always returns a (success, data) tuple
+                if isinstance(cc_result, tuple) and len(cc_result) == 2:
+                    cc_success, cc_data = cc_result
+                else:
+                    cc_success, cc_data = False, {}
+
+                if cc_success and isinstance(cc_data, dict):
                     slog.info("Cyclomatic complexity completed",
                               avg_cc=cc_data.get('avg_cc', 0),
                               methods=len(cc_data.get('method_wise_cc', {})),
                               max_average=cc_settings.get('max_average', 10))
                 else:
-                    slog.warning("Cyclomatic complexity failed", success=cc_success)
+                    slog.warning("Cyclomatic complexity failed",
+                                 success=cc_success, error=str(cc_data)[:200])
+                    failed_analyzers.append('cyclomatic_complexity')
                     cc_data = {}
             except Exception as cc_error:
                 slog.warning("Cyclomatic complexity failed", error=str(cc_error))
+                failed_analyzers.append('cyclomatic_complexity')
                 cc_data = {}
         else:
             slog.info("Cyclomatic complexity analysis skipped (disabled in config)")
@@ -641,8 +673,13 @@ Please check the MR manually and retry if necessary.
             print_banner(f"[{REQUEST_ID_SHORT}] Security Scan Analysis")
             security_settings = get_security_settings(config)
             try:
-                ss_success, ss_data = cal_ss(diff_file_path)
-                if ss_success and ss_data:
+                ss_result = cal_ss(diff_file_path)
+                if isinstance(ss_result, tuple) and len(ss_result) == 2:
+                    ss_success, ss_data = ss_result
+                else:
+                    ss_success, ss_data = False, {}
+
+                if ss_success and isinstance(ss_data, dict):
                     severity = ss_data.get('severity_count', {})
                     slog.info("Security scan completed",
                               high=severity.get('HIGH', 0),
@@ -650,10 +687,13 @@ Please check the MR manually and retry if necessary.
                               low=severity.get('LOW', 0),
                               fail_on_high=security_settings.get('fail_on_high', True))
                 else:
-                    slog.warning("Security scan failed", success=ss_success)
+                    slog.warning("Security scan failed",
+                                 success=ss_success, error=str(ss_data)[:200])
+                    failed_analyzers.append('security_scan')
                     ss_data = {}
             except Exception as ss_error:
                 slog.warning("Security scan failed", error=str(ss_error))
+                failed_analyzers.append('security_scan')
                 ss_data = {}
         else:
             slog.info("Security scan skipped (disabled in config)")
@@ -662,20 +702,28 @@ Please check the MR manually and retry if necessary.
         # 7. Calculate overall rating
         slog.debug("Step 7: Calculating overall rating")
         rating_settings = get_rating_settings(config)
+        high_sev = 0
+        if isinstance(ss_data, dict):
+            high_sev = ss_data.get('severity_count', {}).get('HIGH', 0)
         rating_score = cal_rating(
             loc_data.get('net_lines_of_code_change', 0),
-            lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0
+            lint_data.get('num_lint_disable', 0) if isinstance(lint_data, dict) else 0,
+            failures=failed_analyzers,
+            high_security=high_sev,
         )
         slog.info("Final rating calculated",
                   score=rating_score,
                   max_score=5,
-                  pass_threshold=rating_settings.get('pass_score', 3))
+                  pass_threshold=rating_settings.get('pass_score', 3),
+                  failed_analyzers=failed_analyzers)
         print_banner(f"[{REQUEST_ID_SHORT}] Final Rating: {rating_score}/5")
 
     # Format report for GitLab
     slog.debug("Step 8: Formatting report for GitLab")
     report_body, must_not_be_resolved = format_rating_report(
-        summary_success, summary_content, review_success, review_content, loc_data, lint_data, cc_data, ss_data, rating_score
+        summary_success, summary_content, review_success, review_content,
+        loc_data, lint_data, cc_data, ss_data, rating_score,
+        failed_analyzers=failed_analyzers,
     )
     slog.debug("Report formatted", must_not_be_resolved=must_not_be_resolved)
 

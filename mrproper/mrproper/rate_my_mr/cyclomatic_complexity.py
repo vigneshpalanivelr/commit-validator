@@ -94,7 +94,7 @@ class CyclomaticComplexityCalculator:
         functions = self._extract_functions(diff_lines)
 
         if not functions:
-            return {"avg_cc": 0, "method_wise_cc": {}}
+            return True, {"avg_cc": 0, "method_wise_cc": {}}
 
         method_wise_cc = {}
         cc_values = []

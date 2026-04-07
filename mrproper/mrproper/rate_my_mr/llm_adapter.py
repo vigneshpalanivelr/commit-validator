@@ -359,35 +359,85 @@ class LLMAdapter:
                          status=status,
                          full_response=json.dumps(response_data)[:500])
 
-        # Extract the AI response text from metrics.summary_text
-        metrics = response_data.get('metrics', {})
+        # Extract the AI response from the metrics field.
+        # The BFA API returns a structured metrics object with fields like:
+        #   overall_summary, potential_vulnerabilities, recommended_improvements,
+        #   quality_score, security_score, maintainability_score,
+        #   num_lint_disable, lints_that_disabled
+        # Legacy contract used metrics.summary_text (kept as fallback).
+        metrics = response_data.get('metrics', {}) or {}
         slog.debug("BFA API metrics field",
                    metrics_keys=list(metrics.keys()),
                    metrics_size=len(json.dumps(metrics)))
 
-        summary_text = metrics.get('summary_text', '')
+        def _as_list(val):
+            if val is None:
+                return []
+            if isinstance(val, list):
+                return [str(v) for v in val if v is not None]
+            return [str(val)]
+
+        summary_text = metrics.get('summary_text') or ''
+
+        # New schema: assemble a human-readable text block from structured fields
+        if not summary_text:
+            parts = []
+            overall = metrics.get('overall_summary')
+            if overall:
+                parts.append(str(overall).strip())
+
+            vulns = _as_list(metrics.get('potential_vulnerabilities'))
+            if vulns:
+                parts.append("**Potential Vulnerabilities:**\n" +
+                             "\n".join(f"- {v}" for v in vulns))
+
+            improvements = _as_list(metrics.get('recommended_improvements'))
+            if improvements:
+                parts.append("**Recommended Improvements:**\n" +
+                             "\n".join(f"- {v}" for v in improvements))
+
+            score_bits = []
+            for key, label in (('quality_score', 'Quality'),
+                               ('security_score', 'Security'),
+                               ('maintainability_score', 'Maintainability')):
+                if metrics.get(key) is not None:
+                    score_bits.append(f"{label}: {metrics.get(key)}/10")
+            if score_bits:
+                parts.append("**Scores:** " + " | ".join(score_bits))
+
+            summary_text = "\n\n".join(parts).strip()
 
         if not summary_text:
-            slog.error("No summary_text in BFA response",
+            slog.error("No usable content in BFA response",
                        metrics_keys=list(metrics.keys()),
                        metrics_content=json.dumps(metrics)[:200],
                        status=status,
                        full_response=json.dumps(response_data)[:1000])
-            # Return error message to avoid breaking the pipeline
-            summary_text = "Error: No AI response received from BFA service"
-        else:
-            slog.debug("summary_text extracted successfully",
-                       text_length=len(summary_text),
-                       text_preview=summary_text[:100] if len(summary_text) > 100 else summary_text)
+            # Return an empty-content structure so the caller marks this step
+            # as failed instead of producing a fake-success report entry.
+            return {
+                "content": [],
+                "error": "No usable content in BFA response",
+                "metrics": metrics,
+                "bfa_status": status,
+            }
 
-        # Transform to expected format (compatible with rate_my_mr.py parsing)
+        slog.debug("summary_text assembled successfully",
+                   text_length=len(summary_text),
+                   text_preview=summary_text[:100] if len(summary_text) > 100 else summary_text)
+
+        # Transform to expected format (compatible with rate_my_mr.py parsing).
+        # Also expose the raw metrics dict so callers can consume structured
+        # fields (e.g. num_lint_disable) without re-parsing text.
         transformed = {
             "content": [
                 {
                     "type": "text",
                     "text": summary_text
                 }
-            ]
+            ],
+            "metrics": metrics,
+            "bfa_status": status,
         }
 
         slog.debug("Response transformed from BFA format",
