@@ -104,6 +104,26 @@ class AlignedPipeFormatter(logging.Formatter):
         return super().format(record)
 
 
+# Width of the free-text "message" column before the ` | key=value` section.
+# Padding to this width keeps the structured-fields pipe aligned across all
+# log lines for easy visual scanning. Anything longer is left un-truncated.
+MESSAGE_WIDTH = 45
+
+
+def format_structured_message(message, **kwargs):
+    """
+    Shared formatter used by every StructuredLog helper in the codebase.
+
+    Pads the message portion to MESSAGE_WIDTH so the delimiter before the
+    structured fields aligns vertically across all log lines.
+    """
+    message = str(message)
+    if not kwargs:
+        return message
+    fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
+    return f'{message:<{MESSAGE_WIDTH}} | {fields}'
+
+
 class StructuredLogger:
     """
     Helper for structured logging with key=value pairs.
@@ -111,21 +131,13 @@ class StructuredLogger:
     Usage:
         slog = StructuredLogger(logging.getLogger(__name__))
         slog.info("Pipeline processed", pipeline_id=123, duration_ms=456, status="success")
-
-    Output:
-        2025-11-08 14:23:45.123 | INFO     | rate_my_mr.gitlab              | 4adcc17d | Pipeline processed | pipeline_id=123 duration_ms=456 status=success
     """
 
     def __init__(self, logger):
         self.logger = logger
 
     def _format_message(self, message, **kwargs):
-        """Format message with structured fields."""
-        if kwargs:
-            # Convert kwargs to key=value pairs
-            fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
-            return f'{message} | {fields}'
-        return message
+        return format_structured_message(message, **kwargs)
 
     def debug(self, message, **kwargs):
         self.logger.debug(self._format_message(message, **kwargs))

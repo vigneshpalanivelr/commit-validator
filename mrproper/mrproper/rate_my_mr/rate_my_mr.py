@@ -22,31 +22,27 @@ except ImportError:
 # Get logger (will use the logger set up by rate_my_mr_gitlab.py)
 logger = logging.getLogger(__name__)
 
-# Helper for structured logging
-class StructuredLog:
-    """Lightweight structured logging helper that uses module logger."""
-    @staticmethod
-    def _fmt(msg, **kwargs):
-        if kwargs:
-            fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
-            return f'{msg} | {fields}'
-        return msg
+# Helper for structured logging — uses the shared formatter so the message
+# column stays aligned with every other log source in the project.
+from .logging_config import format_structured_message as _fmt_msg
 
+
+class StructuredLog:
     @staticmethod
     def debug(msg, **kwargs):
-        logger.debug(StructuredLog._fmt(msg, **kwargs))
+        logger.debug(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def info(msg, **kwargs):
-        logger.info(StructuredLog._fmt(msg, **kwargs))
+        logger.info(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def warning(msg, **kwargs):
-        logger.warning(StructuredLog._fmt(msg, **kwargs))
+        logger.warning(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def error(msg, **kwargs):
-        logger.error(StructuredLog._fmt(msg, **kwargs))
+        logger.error(_fmt_msg(msg, **kwargs))
 
 slog = StructuredLog
 
@@ -72,41 +68,17 @@ def send_request(payload, url=RMMConstants.agent_url.value, max_retries=3):
     Returns:
         tuple: (status_code, response_json) or (None/status_code, error_message)
     """
-    slog.info("=" * 50)
-    slog.info("=== SEND REQUEST CALLED ===")
-    slog.info("=" * 50)
-
     # Check routing: BFA_HOST takes priority over AI_SERVICE_URL
     bfa_host = os.environ.get('BFA_HOST')
-    ai_service_url = os.environ.get('AI_SERVICE_URL')
     use_adapter = HAS_LLM_ADAPTER and bfa_host
 
-    slog.debug("AI Service routing decision",
-               HAS_LLM_ADAPTER=HAS_LLM_ADAPTER,
-               BFA_HOST=bfa_host if bfa_host else 'NOT_SET',
-               AI_SERVICE_URL=ai_service_url if ai_service_url else 'NOT_SET',
-               use_adapter=use_adapter,
-               url_provided=url)
-
     if use_adapter:
-        slog.info("Routing to NEW LLM adapter (BFA_HOST configured)",
-                  bfa_host=bfa_host,
-                  note="BFA_HOST takes priority over AI_SERVICE_URL")
-        result = llm_adapter.send_request(payload, url, max_retries)
-        slog.info("LLM adapter returned",
-                  status_code=result[0],
-                  response_type=type(result[1]).__name__)
-        return result
+        slog.info("send_request routed via BFA adapter", bfa_host=bfa_host)
+        return llm_adapter.send_request(payload, url, max_retries)
 
     # Legacy direct connection (only if BFA_HOST not set)
-    slog.info("Routing to LEGACY direct AI service connection",
-              url=url,
-              reason="BFA_HOST not set")
-    slog.debug("Legacy connection parameters",
-               url=url,
-               payload_size=len(str(payload)),
-               timeout=120,
-               max_retries=max_retries)
+    slog.info("send_request routed via legacy AI service",
+              url=url, payload_size=len(str(payload)), max_retries=max_retries)
 
     for attempt in range(max_retries):
         try:
