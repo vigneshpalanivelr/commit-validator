@@ -40,31 +40,27 @@ import json
 
 logger = logging.getLogger(__name__)
 
-# Helper for structured logging
-class StructuredLog:
-    """Lightweight structured logging helper."""
-    @staticmethod
-    def _fmt(msg, **kwargs):
-        if kwargs:
-            fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
-            return f'{msg} | {fields}'
-        return msg
+# Helper for structured logging — uses the shared formatter so the message
+# column stays aligned with every other log source in the project.
+from .logging_config import format_structured_message as _fmt_msg
 
+
+class StructuredLog:
     @staticmethod
     def debug(msg, **kwargs):
-        logger.debug(StructuredLog._fmt(msg, **kwargs))
+        logger.debug(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def info(msg, **kwargs):
-        logger.info(StructuredLog._fmt(msg, **kwargs))
+        logger.info(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def warning(msg, **kwargs):
-        logger.warning(StructuredLog._fmt(msg, **kwargs))
+        logger.warning(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def error(msg, **kwargs):
-        logger.error(StructuredLog._fmt(msg, **kwargs))
+        logger.error(_fmt_msg(msg, **kwargs))
 
 slog = StructuredLog
 
@@ -122,23 +118,15 @@ class LLMAdapter:
         project_id, mr_iid = self._get_project_and_mr()
         current_project_mr = f"{project_id}-{mr_iid}"
 
-        slog.debug("Token acquisition started",
-                   project_id=project_id,
-                   mr_iid=mr_iid,
-                   current_project_mr=current_project_mr)
-
         # If token is pre-configured, use it
         if self.bfa_token_key:
-            slog.info("Using pre-configured BFA_TOKEN_KEY",
-                      token_length=len(self.bfa_token_key),
-                      token_prefix=self.bfa_token_key[:20] if len(self.bfa_token_key) > 20 else "***")
+            slog.info("Token: using pre-configured BFA_TOKEN_KEY",
+                      token_length=len(self.bfa_token_key))
             return self.bfa_token_key
 
         # Check if we already have a token for this project/MR
         if LLMAdapter._session_token and LLMAdapter._token_project_mr == current_project_mr:
-            slog.info("Reusing existing session token",
-                      project_mr=current_project_mr,
-                      token_length=len(LLMAdapter._session_token))
+            slog.info("Token: reusing session token", project_mr=current_project_mr)
             return LLMAdapter._session_token
 
         # Need to get a new token
@@ -152,34 +140,17 @@ class LLMAdapter:
         token_url = f"http://{self.bfa_host}:8000/api/token"
         request_payload = {"subject": subject}
 
-        slog.info("=== TOKEN ACQUISITION START ===")
-        slog.debug("Token API request details",
-                   token_url=token_url,
-                   subject=subject,
-                   request_payload=json.dumps(request_payload))
-
         try:
-            slog.debug("Sending POST request to token endpoint", url=token_url)
             response = requests.post(
                 token_url,
                 headers={"Content-Type": "application/json"},
                 json=request_payload,
                 timeout=30
             )
-
-            slog.debug("Token API raw response",
-                       status_code=response.status_code,
-                       headers=dict(response.headers),
-                       content_length=len(response.content),
-                       response_text=response.text[:500] if len(response.text) > 500 else response.text)
-
             response.raise_for_status()
-
             token_data = response.json()
-            slog.debug("Token API JSON response", response_keys=list(token_data.keys()))
 
             token = token_data.get('token')
-
             if not token:
                 slog.error("Token not found in response",
                            response_data=json.dumps(token_data),
@@ -190,11 +161,9 @@ class LLMAdapter:
             LLMAdapter._session_token = token
             LLMAdapter._token_project_mr = current_project_mr
 
-            slog.info("=== TOKEN ACQUISITION SUCCESS ===",
+            slog.info("Token: acquired from BFA",
                       project_mr=current_project_mr,
-                      token_length=len(token),
-                      token_prefix=token[:20] if len(token) > 20 else "***")
-
+                      token_length=len(token))
             return token
 
         except requests.exceptions.ConnectionError as conn_err:
@@ -256,8 +225,6 @@ class LLMAdapter:
         Returns:
             dict: Transformed payload for new BFA API
         """
-        slog.debug("=== REQUEST TRANSFORMATION START ===")
-
         # Extract metadata from environment (set by rate_my_mr_gitlab.py)
         repo = os.environ.get('MR_REPO', 'unknown')
         branch = os.environ.get('MR_BRANCH', 'unknown')
@@ -265,21 +232,8 @@ class LLMAdapter:
         commit = os.environ.get('MR_COMMIT', 'unknown')
         mr_url = os.environ.get('MR_URL', 'unknown')
 
-        slog.debug("Environment variables for BFA request",
-                   MR_REPO=repo,
-                   MR_BRANCH=branch,
-                   MR_AUTHOR=author,
-                   MR_COMMIT=commit,
-                   MR_URL=mr_url)
-
         # Convert payload dict to JSON string (BFA API expects prompt as JSON string)
         prompt_json_string = json.dumps(payload)
-
-        # Log the original payload structure
-        if 'messages' in payload:
-            slog.debug("Original payload structure",
-                       num_messages=len(payload.get('messages', [])),
-                       message_roles=[msg.get('role') for msg in payload.get('messages', [])])
 
         # Construct new BFA API format
         new_payload = {
@@ -294,13 +248,9 @@ class LLMAdapter:
         slog.debug("Request transformed to BFA format",
                    repo=repo,
                    branch=branch,
-                   author=author,
                    commit=commit[:8] if commit != 'unknown' else 'unknown',
-                   mr_url=mr_url[:50] if mr_url != 'unknown' else 'unknown',
-                   prompt_length=len(prompt_json_string),
-                   total_payload_size=len(json.dumps(new_payload)))
+                   prompt_length=len(prompt_json_string))
 
-        slog.debug("=== REQUEST TRANSFORMATION COMPLETE ===")
         return new_payload
 
     def _transform_response(self, response_data):
@@ -333,26 +283,8 @@ class LLMAdapter:
         Returns:
             dict: Transformed response in expected format
         """
-        slog.debug("=== RESPONSE TRANSFORMATION START ===")
-
-        # Log the raw response structure
-        slog.debug("BFA API response structure",
-                   response_keys=list(response_data.keys()),
-                   response_size=len(json.dumps(response_data)))
-
         # Check response status
         status = response_data.get('status', 'unknown')
-        repo = response_data.get('repo', 'unknown')
-        branch = response_data.get('branch', 'unknown')
-        commit = response_data.get('commit', 'unknown')
-        sent_to = response_data.get('sent_to', 'unknown')
-
-        slog.debug("BFA API response metadata",
-                   status=status,
-                   repo=repo,
-                   branch=branch,
-                   commit=commit,
-                   sent_to=sent_to)
 
         if status != 'ok':
             slog.warning("BFA API returned non-ok status",
@@ -366,9 +298,6 @@ class LLMAdapter:
         #   num_lint_disable, lints_that_disabled
         # Legacy contract used metrics.summary_text (kept as fallback).
         metrics = response_data.get('metrics', {}) or {}
-        slog.debug("BFA API metrics field",
-                   metrics_keys=list(metrics.keys()),
-                   metrics_size=len(json.dumps(metrics)))
 
         def _as_list(val):
             if val is None:
@@ -422,10 +351,6 @@ class LLMAdapter:
                 "bfa_status": status,
             }
 
-        slog.debug("summary_text assembled successfully",
-                   text_length=len(summary_text),
-                   text_preview=summary_text[:100] if len(summary_text) > 100 else summary_text)
-
         # Transform to expected format (compatible with rate_my_mr.py parsing).
         # Also expose the raw metrics dict so callers can consume structured
         # fields (e.g. num_lint_disable) without re-parsing text.
@@ -442,10 +367,7 @@ class LLMAdapter:
 
         slog.debug("Response transformed from BFA format",
                    text_length=len(summary_text),
-                   status=status,
-                   transformed_size=len(json.dumps(transformed)))
-
-        slog.debug("=== RESPONSE TRANSFORMATION COMPLETE ===")
+                   status=status)
         return transformed
 
     def send_request(self, payload, url=None, max_retries=None):
@@ -471,45 +393,28 @@ class LLMAdapter:
                          legacy_url=url,
                          bfa_url=bfa_url)
 
-        slog.info("=" * 60)
-        slog.info("=== LLM ADAPTER REQUEST START ===")
-        slog.info("=" * 60)
-        slog.debug("LLM Adapter request configuration",
-                   url=bfa_url,
-                   bfa_host=self.bfa_host,
-                   timeout_s=self.api_timeout,
-                   max_retries=max_retries,
-                   payload_size=len(str(payload)))
+        slog.info("LLM adapter request",
+                  url=bfa_url, max_retries=max_retries,
+                  payload_size=len(str(payload)))
 
-        # Get or create JWT token
+        # 1. Get or create JWT token
         try:
-            slog.info("Step 1: Acquiring JWT token...")
             token = self._get_or_create_token()
-            slog.info("Step 1: JWT token acquired successfully",
-                      token_length=len(token))
         except Exception as e:
-            slog.error("Step 1 FAILED: JWT token acquisition failed",
-                       error=str(e),
-                       error_type=type(e).__name__)
+            slog.error("JWT token acquisition failed",
+                       error=str(e), error_type=type(e).__name__)
             return None, f"JWT token acquisition failed: {str(e)}"
 
-        # Prepare headers with JWT token
+        # 2. Prepare headers with JWT token
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}"
         }
-        slog.debug("Request headers prepared",
-                   content_type=headers["Content-Type"],
-                   auth_header_length=len(headers["Authorization"]))
 
-        # Transform request payload
-        slog.info("Step 2: Transforming request payload...")
+        # 3. Transform request payload
         transformed_payload = self._transform_request(payload)
-        slog.info("Step 2: Request payload transformed",
-                  transformed_size=len(json.dumps(transformed_payload)))
 
-        # Retry loop
-        slog.info("Step 3: Sending request to BFA API...")
+        # 4. Retry loop: POST -> parse JSON -> transform response
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
@@ -519,22 +424,6 @@ class LLMAdapter:
                               attempt=f"{attempt + 1}/{max_retries}",
                               wait_time_s=wait_time)
                     time.sleep(wait_time)
-
-                slog.debug("Sending POST request to LLM API",
-                           attempt=f"{attempt + 1}/{max_retries}",
-                           url=bfa_url,
-                           timeout=self.api_timeout)
-
-                # Log request details before sending
-                slog.debug("Full request details",
-                           method="POST",
-                           url=bfa_url,
-                           headers_keys=list(headers.keys()),
-                           payload_keys=list(transformed_payload.keys()),
-                           payload_repo=transformed_payload.get('repo'),
-                           payload_branch=transformed_payload.get('branch'),
-                           payload_commit=transformed_payload.get('commit'),
-                           prompt_length=len(transformed_payload.get('prompt', '')))
 
                 request_start_time = time.time()
                 resp = requests.post(
@@ -550,30 +439,19 @@ class LLMAdapter:
                           content_length=len(resp.content),
                           response_time_s=f"{request_duration:.2f}")
 
-                slog.debug("LLM API response headers", headers=dict(resp.headers))
-
                 # Raise an error for bad responses (4xx and 5xx)
                 resp.raise_for_status()
 
                 # Parse and transform response
-                slog.info("Step 4: Parsing JSON response...")
                 try:
                     response_data = resp.json()
-                    slog.debug("LLM API JSON parsed successfully",
-                               response_keys=list(response_data.keys()))
                 except json.JSONDecodeError as json_err:
                     slog.error("Failed to parse JSON response",
                                response_text=resp.text[:500],
                                error=str(json_err))
                     return resp.status_code, f"Invalid JSON response: {str(json_err)}"
 
-                slog.info("Step 5: Transforming response...")
                 transformed_response = self._transform_response(response_data)
-
-                slog.info("=" * 60)
-                slog.info("=== LLM ADAPTER REQUEST SUCCESS ===")
-                slog.info("=" * 60)
-
                 return resp.status_code, transformed_response
 
             except requests.exceptions.HTTPError as http_err:

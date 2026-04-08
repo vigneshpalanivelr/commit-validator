@@ -10,31 +10,27 @@ GITLAB_HOST = 'git.internal.com'
 # Get logger (will use the logger from logging_config if available, otherwise create simple logger)
 logger = logging.getLogger(__name__)
 
-# Helper for structured logging
-class StructuredLog:
-    """Lightweight structured logging helper."""
-    @staticmethod
-    def _fmt(msg, **kwargs):
-        if kwargs:
-            fields = ' '.join(f'{k}={v}' for k, v in kwargs.items())
-            return f'{msg} | {fields}'
-        return msg
+# Helper for structured logging — uses the shared formatter so the message
+# column stays aligned with every other log source in the project.
+from .rate_my_mr.logging_config import format_structured_message as _fmt_msg
 
+
+class StructuredLog:
     @staticmethod
     def debug(msg, **kwargs):
-        logger.debug(StructuredLog._fmt(msg, **kwargs))
+        logger.debug(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def info(msg, **kwargs):
-        logger.info(StructuredLog._fmt(msg, **kwargs))
+        logger.info(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def warning(msg, **kwargs):
-        logger.warning(StructuredLog._fmt(msg, **kwargs))
+        logger.warning(_fmt_msg(msg, **kwargs))
 
     @staticmethod
     def error(msg, **kwargs):
-        logger.error(StructuredLog._fmt(msg, **kwargs))
+        logger.error(_fmt_msg(msg, **kwargs))
 
 slog = StructuredLog
 

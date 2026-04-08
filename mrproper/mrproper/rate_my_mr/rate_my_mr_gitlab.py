@@ -69,62 +69,39 @@ def configure_child_loggers():
 
 configure_child_loggers()
 
-# Debug: Log all environment variables related to AI/LLM configuration
-slog.debug("=" * 60)
-slog.debug("ENVIRONMENT VARIABLES DEBUG")
-slog.debug("=" * 60)
-slog.debug("AI/LLM Configuration",
+# 1. Environment debug (single combined entry, no banner divider lines)
+slog.debug("1. Environment snapshot",
            BFA_HOST=os.environ.get('BFA_HOST', 'NOT_SET'),
            BFA_TOKEN_KEY=f"{os.environ.get('BFA_TOKEN_KEY', 'NOT_SET')[:20]}..." if os.environ.get('BFA_TOKEN_KEY') else 'NOT_SET',
            AI_SERVICE_URL=os.environ.get('AI_SERVICE_URL', 'NOT_SET'),
-           API_TIMEOUT=os.environ.get('API_TIMEOUT', 'NOT_SET'))
-slog.debug("GitLab Configuration",
-           GITLAB_ACCESS_TOKEN=f"{os.environ.get('GITLAB_ACCESS_TOKEN', 'NOT_SET')[:15]}..." if os.environ.get('GITLAB_ACCESS_TOKEN') else 'NOT_SET')
-slog.debug("Logging Configuration",
+           API_TIMEOUT=os.environ.get('API_TIMEOUT', 'NOT_SET'),
+           GITLAB_ACCESS_TOKEN=f"{os.environ.get('GITLAB_ACCESS_TOKEN', 'NOT_SET')[:15]}..." if os.environ.get('GITLAB_ACCESS_TOKEN') else 'NOT_SET',
            LOG_DIR=os.environ.get('LOG_DIR', 'NOT_SET'),
            LOG_LEVEL=os.environ.get('LOG_LEVEL', 'NOT_SET'),
-           LOG_STRUCTURE=os.environ.get('LOG_STRUCTURE', 'NOT_SET'))
-slog.debug("Request Context",
+           LOG_STRUCTURE=os.environ.get('LOG_STRUCTURE', 'NOT_SET'),
            REQUEST_ID=REQUEST_ID,
            PROJECT_ID=PROJECT_ID,
            MR_IID=MR_IID)
-slog.debug("=" * 60)
 
-# Import dependencies with error handling
-slog.debug("Loading dependencies...")
+# Import dependencies. Errors are logged; successful imports stay silent to
+# cut 4 redundant "[OK] ... loaded" debug lines per run.
 try:
     from .. import gitlab  # Import from parent directory (common module)
-    slog.debug("[OK] gitlab module loaded")
-except Exception as e:
-    slog.error("Failed to import gitlab module", error=str(e), error_type=type(e).__name__)
-    raise
-
-try:
     from .rate_my_mr import (
         generate_summary, generate_initial_code_review,
-        generate_lint_disable_report, cal_rating, print_banner,
+        generate_lint_disable_report, cal_rating,
         cal_cc, cal_ss
     )
-    slog.debug("[OK] rate_my_mr module loaded")
-except Exception as e:
-    slog.error("Failed to import rate_my_mr functions", error=str(e), error_type=type(e).__name__)
-    raise
-
-try:
     from .loc import LOCCalculator
-    slog.debug("[OK] LOCCalculator loaded")
+    from .config_loader import (
+        load_config, is_feature_enabled, get_loc_settings, get_cc_settings,
+        get_security_settings, get_lint_settings, get_rating_settings,
+        get_report_settings,
+    )
 except Exception as e:
-    slog.error("Failed to import LOCCalculator", error=str(e), error_type=type(e).__name__)
+    slog.error("Failed to import validator dependencies",
+               error=str(e), error_type=type(e).__name__)
     raise
-
-try:
-    from .config_loader import load_config, is_feature_enabled, get_loc_settings, get_cc_settings, get_security_settings, get_lint_settings, get_rating_settings, get_report_settings
-    slog.debug("[OK] config_loader loaded")
-except Exception as e:
-    slog.error("Failed to import config_loader", error=str(e), error_type=type(e).__name__)
-    raise
-
-slog.debug("All dependencies loaded successfully")
 
 HEADER = """\
 :star2: MR Quality Rating Report :star2:
@@ -395,46 +372,26 @@ def handle_mr(proj, mriid):
         mriid: Merge request IID
     """
 
-    slog.info("Starting MR analysis", project=proj, mr_iid=mriid, gitlab_host=gitlab.GITLAB_HOST)
-
-    try:
-        gitlab_token = os.environ.get('GITLAB_ACCESS_TOKEN', '')
-        token_available = bool(gitlab_token)
-        slog.debug("Environment check", token_available=token_available)
-        if token_available:
-            logger.debug(f"Token starts with: {gitlab_token[:10]}...")
-    except Exception as e:
-        slog.error("Error checking environment", error=str(e))
-        token_available = False
-
-    print_banner(f"[{REQUEST_ID_SHORT}] Processing MR {mriid} in project {proj}")
-
-    # Set PROJECT_ID and MR_IID for LLM adapter JWT token generation
-    # These are needed if BFA_HOST is configured (new LLM adapter)
+    # Set PROJECT_ID and MR_IID for LLM adapter JWT token generation.
     os.environ['PROJECT_ID'] = proj
     os.environ['MR_IID'] = str(mriid)
-    slog.debug("Environment configured for LLM adapter", project_id=proj, mr_iid=mriid)
 
     try:
-        slog.debug("Fetching MR data from GitLab API", project=proj, mr_iid=mriid)
-        # Fetch MR data from GitLab
+        # 3.1 Fetch MR data
         mr = gitlab.gitlab("/projects/{}/merge_requests/{}".format(proj, mriid))
-        slog.info("MR fetched successfully",
+        slog.info("3.1 MR fetched",
                   title=mr.title,
                   state=mr.state,
                   source_branch=mr.source_branch,
                   target_branch=mr.target_branch)
 
-        slog.debug("Fetching MR commits", project=proj, mr_iid=mriid)
         mrcommits = gitlab.gitlab("/projects/{}/merge_requests/{}/commits".format(proj, mr.iid))
-        slog.info("MR commits fetched", commit_count=len(mrcommits))
+        slog.info("3.2 MR commits fetched", commit_count=len(mrcommits))
 
         for i, commit in enumerate(mrcommits):
             slog.debug(f"Commit {i+1}", commit_id=commit.id[:8], title=commit.title)
 
-        # Extract MR metadata for LLM adapter (new BFA API integration)
-        # These environment variables are used by llm_adapter.py to construct the request
-        slog.debug("Extracting MR metadata for LLM adapter")
+        # 3.3 Extract MR metadata for LLM adapter (new BFA API integration)
 
         # Decode project name from URL encoding (e.g., "my-org%2Fmy-project" → "my-org/my-project")
         MR_REPO = urllib.parse.unquote(proj)
@@ -463,7 +420,7 @@ def handle_mr(proj, mriid):
         os.environ['MR_COMMIT'] = MR_COMMIT
         os.environ['MR_URL'] = MR_URL
 
-        slog.info("MR metadata extracted for LLM adapter",
+        slog.info("3.3 MR metadata extracted",
                   repo=MR_REPO,
                   branch=MR_BRANCH,
                   author=MR_AUTHOR,
@@ -474,22 +431,14 @@ def handle_mr(proj, mriid):
         slog.error("GitLab API error", error=str(api_error), error_type=type(api_error).__name__)
         raise
 
-    # Setup temporary git repository for analysis
-    slog.debug("Setting up temporary git repository")
+    # 3.4 Setup temporary git repository for analysis
     with tempfile.TemporaryDirectory() as tdir:
-        slog.debug("Temporary directory created", path=tdir)
-
-        slog.debug("Initializing git repository")
         init_result = subprocess.call(["git", "init", "-q"], cwd=tdir)
         if init_result != 0:
             slog.error("Git init failed", return_code=init_result)
             raise RuntimeError(f"Git init failed with return code {init_result}")
 
         clone_url = gitlab.get_clone_url(proj.replace('%2F', '/'))
-        slog.debug("Fetching git repository",
-                   target_branch=mr.target_branch,
-                   source_branch=mr.source_branch,
-                   mr_ref=f"merge-requests/{mr.iid}/head")
 
         try:
             # Fetch both MR head and target branch for proper diff
@@ -503,7 +452,7 @@ def handle_mr(proj, mriid):
             if fetch_result != 0:
                 slog.error("Git fetch failed", return_code=fetch_result, depth=fetch_depth)
                 raise RuntimeError(f"Git fetch failed with return code {fetch_result}")
-            slog.info("Git fetch completed", depth=fetch_depth, commits=len(mrcommits))
+            slog.info("3.4 Git fetch completed", depth=fetch_depth, commits=len(mrcommits))
         except RuntimeError:
             raise
         except Exception as fetch_error:
@@ -512,15 +461,13 @@ def handle_mr(proj, mriid):
 
         try:
             subprocess.check_output(["git", "checkout", "-q", "-b", "check", "FETCH_HEAD"], cwd=tdir)
-            slog.debug("Git checkout completed", branch="check")
         except Exception as checkout_error:
             slog.error("Git checkout failed", error=str(checkout_error), error_type=type(checkout_error).__name__)
             raise
 
-        # Load repository-specific configuration
-        slog.debug("Loading repository configuration", repo_dir=tdir)
+        # 3.5 Load repository-specific configuration
         config = load_config(tdir)
-        slog.info("Configuration loaded",
+        slog.info("3.5 Configuration loaded",
                   ai_summary=is_feature_enabled(config, 'ai_summary'),
                   ai_code_review=is_feature_enabled(config, 'ai_code_review'),
                   loc_analysis=is_feature_enabled(config, 'loc_analysis'),
@@ -528,8 +475,7 @@ def handle_mr(proj, mriid):
                   cyclomatic_complexity=is_feature_enabled(config, 'cyclomatic_complexity'),
                   security_scan=is_feature_enabled(config, 'security_scan'))
 
-        # Create diff file for analysis
-        slog.debug("Creating diff file for analysis")
+        # 3.6 Create diff file for analysis
         diff_file_path = create_diff_from_mr(proj, mriid, tdir, mr, mrcommits)
 
         if not diff_file_path or not os.path.exists(diff_file_path):
@@ -549,97 +495,81 @@ Please check the MR manually and retry if necessary.
             gitlab.update_discussion(proj, mriid, HEADER, error_report, False)
             return
 
-        # Verify diff file content
-        try:
-            with open(diff_file_path, 'r') as f:
-                diff_content = f.read()
-                slog.debug("Diff file created", size_bytes=len(diff_content), preview=diff_content[:200])
-        except Exception as read_error:
-            slog.warning("Could not read diff file", error=str(read_error))
-
         # Run analysis pipeline
-        print_banner(f"[{REQUEST_ID_SHORT}] Starting Analysis Pipeline")
-        slog.info("Analysis pipeline started")
+        slog.info("3.7 Analysis pipeline started")
 
         # Track which analyzers actually failed so cal_rating can penalize
         # and the report can surface real status.
         failed_analyzers = []
 
-        # 1. Generate AI summary (if enabled)
-        slog.debug("Step 1: Generating AI summary")
+        # 3.7.1 AI summary
         if is_feature_enabled(config, 'ai_summary'):
             summary_success, summary_content = generate_summary(diff_file_path)
             if summary_success:
-                slog.info("AI summary succeeded")
+                slog.info("3.7.1 AI summary succeeded")
             else:
-                slog.warning("AI summary failed", error=str(summary_content)[:200])
+                slog.warning("3.7.1 AI summary failed", error=str(summary_content)[:200])
                 failed_analyzers.append('ai_summary')
                 summary_content = ""
         else:
-            slog.info("AI summary skipped (disabled in config)")
+            slog.info("3.7.1 AI summary skipped (disabled)")
             summary_success = False
             summary_content = ""
 
-        # 2. Generate AI code review (if enabled)
-        slog.debug("Step 2: Generating AI code review")
+        # 3.7.2 AI code review
         if is_feature_enabled(config, 'ai_code_review'):
             review_success, review_content = generate_initial_code_review(diff_file_path)
             if review_success:
-                slog.info("AI code review succeeded")
+                slog.info("3.7.2 AI code review succeeded")
             else:
-                slog.warning("AI code review failed", error=str(review_content)[:200])
+                slog.warning("3.7.2 AI code review failed", error=str(review_content)[:200])
                 failed_analyzers.append('ai_code_review')
                 review_content = ""
         else:
-            slog.info("AI code review skipped (disabled in config)")
+            slog.info("3.7.2 AI code review skipped (disabled)")
             review_success = False
             review_content = ""
 
-        # 3. Calculate LOC metrics (if enabled)
-        slog.debug("Step 3: Calculating LOC metrics")
+        # 3.7.3 LOC metrics
         if is_feature_enabled(config, 'loc_analysis'):
-            print_banner(f"[{REQUEST_ID_SHORT}] LOC Analysis")
             loc_settings = get_loc_settings(config)
             loc_calculator = LOCCalculator(diff_file_path)
             loc_success, loc_data = loc_calculator.calculate_loc()
 
             if not loc_success:
-                slog.warning("LOC analysis failed", error=loc_data)
+                slog.warning("3.7.3 LOC analysis failed", error=loc_data)
                 failed_analyzers.append('loc_analysis')
                 loc_data = {'lines_of_code_added': 0, 'lines_of_code_removed': 0, 'net_lines_of_code_change': 0}
             else:
-                slog.info("LOC analysis completed",
+                slog.info("3.7.3 LOC analysis completed",
                           added=loc_data.get('lines_of_code_added', 0),
                           removed=loc_data.get('lines_of_code_removed', 0),
                           net=loc_data.get('net_lines_of_code_change', 0),
                           max_lines=loc_settings.get('max_lines', 500))
         else:
-            slog.info("LOC analysis skipped (disabled in config)")
+            slog.info("3.7.3 LOC analysis skipped (disabled)")
             loc_data = {'lines_of_code_added': 0, 'lines_of_code_removed': 0, 'net_lines_of_code_change': 0}
 
-        # 4. Analyze lint disables (if enabled)
-        slog.debug("Step 4: Analyzing lint disables")
+        # 3.7.4 Lint disable analysis
         if is_feature_enabled(config, 'lint_disable_check'):
             lint_settings = get_lint_settings(config)
             lint_success, lint_data = generate_lint_disable_report(diff_file_path)
 
             if not lint_success:
-                slog.warning("Lint analysis failed", error=lint_data)
+                slog.warning("3.7.4 Lint analysis failed", error=lint_data)
                 failed_analyzers.append('lint_disable_check')
                 lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
             else:
-                slog.info("Lint analysis completed",
+                slog.info("3.7.4 Lint analysis completed",
                           num_disables=lint_data.get('num_lint_disable', 0),
                           disabled_lints=lint_data.get('lints_that_disabled', ''),
                           max_new_disables=lint_settings.get('max_new_disables', 10))
         else:
-            slog.info("Lint disable analysis skipped (disabled in config)")
+            slog.info("3.7.4 Lint analysis skipped (disabled)")
             lint_data = {'num_lint_disable': 0, 'lints_that_disabled': ''}
 
-        # 5. Calculate cyclomatic complexity (if enabled)
-        slog.debug("Step 5: Calculating cyclomatic complexity")
+        # 3.7.5 Cyclomatic complexity
         if is_feature_enabled(config, 'cyclomatic_complexity'):
-            print_banner(f"[{REQUEST_ID_SHORT}] Cyclomatic Complexity Analysis")
             cc_settings = get_cc_settings(config)
             try:
                 cc_result = cal_cc(diff_file_path)
@@ -650,27 +580,25 @@ Please check the MR manually and retry if necessary.
                     cc_success, cc_data = False, {}
 
                 if cc_success and isinstance(cc_data, dict):
-                    slog.info("Cyclomatic complexity completed",
+                    slog.info("3.7.5 Cyclomatic complexity completed",
                               avg_cc=cc_data.get('avg_cc', 0),
                               methods=len(cc_data.get('method_wise_cc', {})),
                               max_average=cc_settings.get('max_average', 10))
                 else:
-                    slog.warning("Cyclomatic complexity failed",
+                    slog.warning("3.7.5 Cyclomatic complexity failed",
                                  success=cc_success, error=str(cc_data)[:200])
                     failed_analyzers.append('cyclomatic_complexity')
                     cc_data = {}
             except Exception as cc_error:
-                slog.warning("Cyclomatic complexity failed", error=str(cc_error))
+                slog.warning("3.7.5 Cyclomatic complexity failed", error=str(cc_error))
                 failed_analyzers.append('cyclomatic_complexity')
                 cc_data = {}
         else:
-            slog.info("Cyclomatic complexity analysis skipped (disabled in config)")
+            slog.info("3.7.5 Cyclomatic complexity skipped (disabled)")
             cc_data = {}
 
-        # 6. Security scan (if enabled)
-        slog.debug("Step 6: Running security scan")
+        # 3.7.6 Security scan
         if is_feature_enabled(config, 'security_scan'):
-            print_banner(f"[{REQUEST_ID_SHORT}] Security Scan Analysis")
             security_settings = get_security_settings(config)
             try:
                 ss_result = cal_ss(diff_file_path)
@@ -681,26 +609,25 @@ Please check the MR manually and retry if necessary.
 
                 if ss_success and isinstance(ss_data, dict):
                     severity = ss_data.get('severity_count', {})
-                    slog.info("Security scan completed",
+                    slog.info("3.7.6 Security scan completed",
                               high=severity.get('HIGH', 0),
                               medium=severity.get('MEDIUM', 0),
                               low=severity.get('LOW', 0),
                               fail_on_high=security_settings.get('fail_on_high', True))
                 else:
-                    slog.warning("Security scan failed",
+                    slog.warning("3.7.6 Security scan failed",
                                  success=ss_success, error=str(ss_data)[:200])
                     failed_analyzers.append('security_scan')
                     ss_data = {}
             except Exception as ss_error:
-                slog.warning("Security scan failed", error=str(ss_error))
+                slog.warning("3.7.6 Security scan failed", error=str(ss_error))
                 failed_analyzers.append('security_scan')
                 ss_data = {}
         else:
-            slog.info("Security scan skipped (disabled in config)")
+            slog.info("3.7.6 Security scan skipped (disabled)")
             ss_data = {}
 
-        # 7. Calculate overall rating
-        slog.debug("Step 7: Calculating overall rating")
+        # 3.8 Calculate overall rating
         rating_settings = get_rating_settings(config)
         high_sev = 0
         if isinstance(ss_data, dict):
@@ -711,42 +638,34 @@ Please check the MR manually and retry if necessary.
             failures=failed_analyzers,
             high_security=high_sev,
         )
-        slog.info("Final rating calculated",
+        slog.info("3.8 Final rating calculated",
                   score=rating_score,
                   max_score=5,
                   pass_threshold=rating_settings.get('pass_score', 3),
                   failed_analyzers=failed_analyzers)
-        print_banner(f"[{REQUEST_ID_SHORT}] Final Rating: {rating_score}/5")
 
-    # Format report for GitLab
-    slog.debug("Step 8: Formatting report for GitLab")
+    # 3.9 Format report for GitLab
     report_body, must_not_be_resolved = format_rating_report(
         summary_success, summary_content, review_success, review_content,
         loc_data, lint_data, cc_data, ss_data, rating_score,
         failed_analyzers=failed_analyzers,
     )
-    slog.debug("Report formatted", must_not_be_resolved=must_not_be_resolved)
+    slog.info("3.9 Report formatted", must_not_be_resolved=must_not_be_resolved)
 
-    # Post results to GitLab
-    slog.debug("Step 9: Posting results to GitLab")
+    # 3.10 Post results to GitLab
     try:
         gitlab.update_discussion(proj, mriid, HEADER, report_body, must_not_be_resolved)
-        slog.info("Report posted to GitLab successfully")
+        slog.info("3.10 Report posted to GitLab")
     except Exception as gitlab_error:
         slog.error("Failed to post to GitLab", error=str(gitlab_error), error_type=type(gitlab_error).__name__)
         raise
-
-    slog.info("MR analysis completed successfully")
 
 
 def main():
     """
     Entry point for GitLab-integrated rate-my-mr validator
     """
-    slog.info("=" * 60)
-    slog.info("MAIN FUNCTION CALLED")
-    slog.info("=" * 60)
-    slog.debug("Command line arguments", argv=sys.argv, argc=len(sys.argv))
+    slog.info("2. Main function called", argv=sys.argv, argc=len(sys.argv))
 
     if len(sys.argv) != 3:
         slog.error("Invalid arguments", expected=3, received=len(sys.argv), argv=sys.argv)
@@ -757,11 +676,11 @@ def main():
     proj = urllib.parse.quote(sys.argv[1], safe="")
     mriid = int(sys.argv[2])
 
-    slog.info("Starting MR analysis", project=sys.argv[1], project_encoded=proj, mr_iid=mriid)
+    slog.info("3. Starting MR analysis", project=sys.argv[1], project_encoded=proj, mr_iid=mriid)
 
     try:
         handle_mr(proj, mriid)
-        slog.info("MR analysis completed successfully", mr_iid=mriid)
+        slog.info("4. MR analysis completed", mr_iid=mriid)
         print(f"Successfully analyzed MR {mriid} in project {sys.argv[1]}")
     except Exception as e:
         slog.error("MR analysis failed", mr_iid=mriid, error=str(e), error_type=type(e).__name__)
