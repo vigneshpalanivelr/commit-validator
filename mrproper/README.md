@@ -150,7 +150,7 @@ The MRProper library is containerized for isolated execution:
 
 **Container Execution Pattern:**
 ```bash
-docker run -d --rm --env-file mrproper.env mr-checker-vp-test [validator] [project] [mr_iid]
+docker run -d --rm --env-file mrproper.env ratemymr-validate-container [validator] [project] [mr_iid]
 ```
 
 ## Setup and Installation

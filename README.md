@@ -54,6 +54,8 @@ Automated MR validation with AI-powered code review, security scanning, and qual
 
 ### Build & Install
 
+**Option 1: Using Shell Scripts (Quick)**
+
 ```bash
 # Build Docker images
 ./build-docker-images
@@ -66,11 +68,56 @@ Automated MR validation with AI-powered code review, security scanning, and qual
 
 **Expected output:**
 ```
-Building mrproper-webhook-vp-test...
-Successfully tagged mrproper-webhook-vp-test:latest
-Building mr-checker-vp-test...
-Successfully tagged mr-checker-vp-test:latest
+Building ratemymr-validate-container...
+Successfully tagged ratemymr-validate-container:latest
+Building ratemymr-webhook-container...
+Successfully tagged ratemymr-webhook-container:latest
 ```
+
+**Container Details:**
+- **Webhook Container:** `ratemymr-webhook-container` (Port 9912)
+  - Long-running service that receives GitLab webhooks
+  - Spawns validator containers on demand
+- **Validator Container:** `ratemymr-validate-container` (Ephemeral)
+  - Short-lived containers created per MR validation
+  - No persistent port (uses host network)
+
+**Option 2: Using Container Management Script (Recommended)**
+
+The `manage_container.py` script provides enhanced features including configuration validation, health checks, and testing:
+
+```bash
+# Install dependencies
+pip install python-dotenv docker rich
+
+# Validate configuration
+python manage_container.py config
+
+# Build images
+python manage_container.py build
+
+# Start container with validation
+python manage_container.py start
+
+# Check status
+python manage_container.py status
+```
+
+**Benefits:**
+- ✓ Configuration validation before starting
+- ✓ Interactive prompts with confirmations
+- ✓ Health monitoring and resource usage
+- ✓ Integrated testing capabilities
+- ✓ Rich CLI output with colors and tables
+
+**📖 Complete Documentation:** [CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md](./CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md)
+
+**Quick References:**
+- Quick commands cheat sheet
+- Step-by-step workflows
+- Real-world examples
+- Automation templates
+- Troubleshooting guide
 
 ### Configure
 
@@ -406,7 +453,7 @@ docker run --rm --env-file mrproper.env \
   -e REQUEST_ID=test_$(date +%s)_12345678 \
   -e PROJECT_ID=org/repo \
   -e MR_IID=42 \
-  mr-checker-vp-test rate-my-mr org%2Frepo 42
+  ratemymr-validate-container rate-my-mr org%2Frepo 42
 ```
 
 **Expected log output:**
@@ -447,14 +494,14 @@ This MR adds authentication middleware...
 
 ```bash
 docker run --rm --env-file mrproper.env \
-  mr-checker-vp-test mrproper-clang-format org%2Frepo 42
+  ratemymr-validate-container mrproper-clang-format org%2Frepo 42
 ```
 
 ### Commit Message (mrproper-message)
 
 ```bash
 docker run --rm --env-file mrproper.env \
-  mr-checker-vp-test mrproper-message org%2Frepo 42
+  ratemymr-validate-container mrproper-message org%2Frepo 42
 ```
 
 ---
@@ -472,7 +519,7 @@ curl http://localhost:9912/
 docker ps -a | grep mr-checker | head -5
 
 # View webhook logs
-docker logs mrproper-webhook-vp-test --tail 50
+docker logs ratemymr-webhook-container --tail 50
 
 # Find logs for specific MR
 ls /home/docker/tmp/mr-validator-logs/validations/$(date +%Y-%m-%d)/*/mr-42/
@@ -552,7 +599,7 @@ docker info
 ```
 
 **Common causes:**
-- Docker image not found: `mr-checker-vp-test`
+- Docker image not found: `ratemymr-validate-container`
 - Docker daemon not responding
 - mrproper.env file missing
 - Insufficient Docker permissions

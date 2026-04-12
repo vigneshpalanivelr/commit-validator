@@ -2,6 +2,6 @@
 
 set -e
 
-docker build -t mr-checker-vp-test mrproper
-docker build -t mrproper-webhook-vp-test webhook-server
+docker build -t ratemymr-validate-container mrproper
+docker build -t ratemymr-webhook-container webhook-server
 

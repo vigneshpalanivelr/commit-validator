@@ -126,7 +126,7 @@ class GitLabWebHookHandler(tornado.web.RequestHandler):
                         # Mount log directory
                         "--volume", f"{log_dir}:{log_dir}",
                         "--name", f"mr-{c}-{data.object_attributes.iid}-{request_id_short}",
-                        "mr-checker-vp-test", c,
+                        "ratemymr-validate-container", c,
                         data.project.path_with_namespace,
                         str(data.object_attributes.iid)
                     ]

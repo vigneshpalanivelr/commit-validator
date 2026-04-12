@@ -105,7 +105,7 @@ GitLab Webhook → Tornado Server → GitLabWebHookHandler.post() → Docker Con
   - `--rm`: Auto-cleanup container when complete
   - `--env-file mrproper.env`: Inject GitLab tokens and config
   - `--log-driver=syslog`: Centralized logging
-  - `mr-checker-vp-test`: Uses pre-built validation container image
+  - `ratemymr-validate-container`: Uses pre-built validation container image
 - **Passes runtime arguments**:
   - Checker type (e.g., "mrproper-clang-format", "rate-my-mr")
   - Project namespace (`data.project.path_with_namespace`)
@@ -128,7 +128,7 @@ The system supports three validation types:
 ### Docker Integration
 
 For each requested checker, the handler:
-1. Launches a Docker container with `mr-checker-vp-test` image
+1. Launches a Docker container with `ratemymr-validate-container` image
 2. Passes environment variables via `mrproper.env`
 3. Provides project namespace and MR IID as arguments
 4. Uses detached mode (`-d`) and auto-cleanup (`--rm`)
@@ -172,7 +172,7 @@ The webhook server Docker image:
 - **Output**: Docker container execution for validation
 - **Dependencies**:
   - **[../mrproper/](../mrproper/)** - Core validation library and Docker containers
-    - Uses `mr-checker-vp-test` Docker image built from mrproper/
+    - Uses `ratemymr-validate-container` Docker image built from mrproper/
     - Executes [mrproper-clang-format](../mrproper/bin/mrproper-clang-format), [mrproper-message](../mrproper/bin/mrproper-message), and [rate-my-mr](../mrproper/bin/rate-my-mr) scripts
     - Leverages [GitLab API client](../mrproper/mrproper/gitlab.py) for posting results
   - **Docker daemon** for container orchestration

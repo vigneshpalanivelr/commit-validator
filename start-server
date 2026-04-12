@@ -11,12 +11,12 @@ fi
 
 # Handle restart argument
 if [ "$1" = "restart" ]; then
-	echo "Stopping existing mrproper-webhook-vp-test containers..."
+	echo "Stopping existing ratemymr-webhook-container containers..."
 	# Updated to also check by name
-    docker ps --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker stop
-	echo "Removing stopped mrproper-webhook-vp-test containers..."
-    docker ps -a --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | xargs -r docker rm
-    
+    docker ps --filter "name=ratemymr-webhook-container" --format "{{.ID}}" | xargs -r docker stop
+	echo "Removing stopped ratemymr-webhook-container containers..."
+    docker ps -a --filter "name=ratemymr-webhook-container" --format "{{.ID}}" | xargs -r docker rm
+
     # Also check if any other container is using port 9912 and offer to stop it
     port_containers=$(docker ps --format "{{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}" | grep ":9912->")
     if [ -n "$port_containers" ]; then
@@ -35,13 +35,13 @@ if [ "$1" = "restart" ]; then
     fi
 fi
 
-# Check if mrproper-webhook-vp-test is already running (by name)
-if docker ps --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | grep -q .; then
-	echo "ERROR: mrproper-webhook-vp-test container is already running"
-	echo "Running mrproper-webhook-vp-test containers:"
-    docker ps --filter "name=mrproper-webhook-vp-test" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}"
+# Check if ratemymr-webhook-container is already running (by name)
+if docker ps --filter "name=ratemymr-webhook-container" --format "{{.ID}}" | grep -q .; then
+	echo "ERROR: ratemymr-webhook-container container is already running"
+	echo "Running ratemymr-webhook-container containers:"
+    docker ps --filter "name=ratemymr-webhook-container" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}"
 	echo ""
-	echo "Use '$0 restart' to stop existing mrproper-webhook-vp-test containers and restart"
+	echo "Use '$0 restart' to stop existing ratemymr-webhook-container containers and restart"
 	exit 1
 fi
 
@@ -55,23 +55,23 @@ if [ -n "$port_check" ]; then
     exit 1
 fi
 
-echo "Starting mrproper-webhook server on port 9912..."
+echo "Starting RateMyMR webhook server on port 9912..."
 docker run -d \
-	--name mrproper-webhook-vp-test \
+	--name ratemymr-webhook-container \
 	--restart=unless-stopped \
 	--publish 9912:9912 \
 	-t \
 	--env-file "$here/mrproper.env" \
 	--volume /var/run/docker.sock:/var/run/docker.sock \
-	mrproper-webhook-vp-test
+	ratemymr-webhook-container
 
 # Verify the container started successfully
 sleep 2
-if docker ps --filter "name=mrproper-webhook-vp-test" --format "{{.ID}}" | grep -q .; then
+if docker ps --filter "name=ratemymr-webhook-container" --format "{{.ID}}" | grep -q .; then
     echo "✓ Container started successfully!"
-    docker ps --filter "name=mrproper-webhook-vp-test" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}\t{{.Status}}"
+    docker ps --filter "name=ratemymr-webhook-container" --format "table {{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Ports}}\t{{.Status}}"
 else
     echo "✗ Container failed to start. Check logs:"
-    echo "docker logs mrproper-webhook-vp-test"
+    echo "docker logs ratemymr-webhook-container"
     exit 1
 fi

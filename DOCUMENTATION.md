@@ -46,13 +46,13 @@ graph TB
 
     subgraph "MR Validator Infrastructure"
         subgraph "Persistent Container"
-            WS[Webhook Server<br/>mrproper-webhook-vp-test<br/>Port: 9912<br/>Framework: Tornado]
+            WS[Webhook Server<br/>ratemymr-webhook-container<br/>Port: 9912<br/>Framework: Tornado]
         end
 
         subgraph "Ephemeral Containers"
-            VC1[Validator Container 1<br/>mr-rate-my-mr-42-abc123<br/>Image: mr-checker-vp-test]
-            VC2[Validator Container 2<br/>mr-mrproper-message-43-def456<br/>Image: mr-checker-vp-test]
-            VC3[Validator Container 3<br/>mr-mrproper-clang-format-44-ghi789<br/>Image: mr-checker-vp-test]
+            VC1[Validator Container 1<br/>mr-rate-my-mr-42-abc123<br/>Image: ratemymr-validate-container]
+            VC2[Validator Container 2<br/>mr-mrproper-message-43-def456<br/>Image: ratemymr-validate-container]
+            VC3[Validator Container 3<br/>mr-mrproper-clang-format-44-ghi789<br/>Image: ratemymr-validate-container]
         end
 
         subgraph "Shared Storage"
@@ -120,7 +120,7 @@ graph LR
 
 ## Component Details
 
-### 1. Webhook Server (`mrproper-webhook-vp-test`)
+### 1. Webhook Server (`ratemymr-webhook-container`)
 
 **Purpose**: Persistent HTTP server that receives GitLab webhook events and spawns validator containers
 
@@ -136,17 +136,23 @@ graph LR
 - Centralized logging coordination
 
 **Container Details**:
-- Image: `mrproper-webhook-vp-test`
-- Port: `9912` (exposed to host)
+- Image: `ratemymr-webhook-container`
+- Port: `9912` (exposed to host, persistent)
 - Restart Policy: `always`
 - Environment: Loaded from `mrproper.env`
 
-### 2. Validator Container (`mr-checker-vp-test`)
+### 2. Validator Container (`ratemymr-validate-container`)
 
 **Purpose**: Ephemeral containers that perform MR analysis and quality assessment
 
 **Technology**:
 - Python 3.8+ with analysis libraries
+
+**Container Details**:
+- Image: `ratemymr-validate-container`
+- Port: None (ephemeral, uses host network, no fixed port)
+- Lifecycle: Created per validation, removed after completion
+- Environment: Inherited from webhook server + MR-specific vars
 - Git client for repository operations
 - Bandit (security scanner)
 - Radon (cyclomatic complexity)
@@ -903,8 +909,8 @@ These are set automatically by the system and should not be configured manually:
 ```
 
 Expected images:
-- `mrproper-webhook-vp-test:latest` (Webhook server)
-- `mr-checker-vp-test:latest` (Validator)
+- `ratemymr-webhook-container:latest` (Webhook server)
+- `ratemymr-validate-container:latest` (Validator)
 
 ### Step 2: Configure Environment
 
@@ -938,7 +944,7 @@ This will:
 Verify:
 ```bash
 curl http://localhost:9912/
-docker logs mrproper-webhook-vp-test
+docker logs ratemymr-webhook-container
 ```
 
 ### Step 4: Configure GitLab Webhook
@@ -973,7 +979,7 @@ curl -X POST http://localhost:9912/mr-proper/rate-my-mr \
 
 1. **Check webhook server logs**:
    ```bash
-   docker logs -f mrproper-webhook-vp-test
+   docker logs -f ratemymr-webhook-container
    ```
 
 2. **Create a test MR in GitLab**
@@ -1033,7 +1039,7 @@ Internet (GitLab) → [Port 9912] → Webhook Server (Host Network)
 
 **Monitor webhook server**:
 ```bash
-docker logs -f mrproper-webhook-vp-test
+docker logs -f ratemymr-webhook-container
 ```
 
 **Find validation logs by MR**:
@@ -1061,7 +1067,7 @@ docker run --rm --env-file mrproper.env \
   -e REQUEST_ID=test_$(date +%s)_12345678 \
   -e PROJECT_ID=my-org%2Fmy-project \
   -e MR_IID=42 \
-  mr-checker-vp-test rate-my-mr my-org%2Fmy-project 42
+  ratemymr-validate-container rate-my-mr my-org%2Fmy-project 42
 ```
 
 For detailed troubleshooting, see [README.md - Troubleshooting](./README.md#troubleshooting).

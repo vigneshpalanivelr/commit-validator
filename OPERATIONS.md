@@ -101,31 +101,35 @@ chmod 600 mrproper.env
 **3. Start webhook server:**
 ```bash
 docker run -d \
-  --name mrproper-webhook-vp-test \
+  --name ratemymr-webhook-container \
   --restart=unless-stopped \
   --env-file mrproper.env \
   -p 9912:9912 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /mnt/nfs/mr-validator-logs:/home/docker/tmp/mr-validator-logs \
-  mrproper-webhook-vp-test
+  ratemymr-webhook-container
 ```
 
 **4. Verify:**
 ```bash
 docker ps | grep webhook
 curl http://localhost:9912/
-docker logs mrproper-webhook-vp-test --tail 20
+docker logs ratemymr-webhook-container --tail 20
 ```
 
 **Expected output:**
 ```
-CONTAINER ID   IMAGE                      STATUS          PORTS
-abc123def456   mrproper-webhook-vp-test   Up 2 minutes    0.0.0.0:9912->9912/tcp
+CONTAINER ID   IMAGE                          STATUS          PORTS
+abc123def456   ratemymr-webhook-container     Up 2 minutes    0.0.0.0:9912->9912/tcp
 
 === MR Validator Webhook Server Starting ===
 Docker connectivity verified
 Starting webhook server on port 9912...
 ```
+
+**Container Ports:**
+- **Webhook Container:** Port 9912 (GitLab webhook endpoint)
+- **Validator Containers:** No fixed port (ephemeral, spawned on-demand)
 
 ### Volume Configuration
 
@@ -142,6 +146,95 @@ nfs-server:/exports/mr-validator-logs /mnt/nfs/mr-validator-logs nfs defaults 0 
 # Mount
 mount /mnt/nfs/mr-validator-logs
 ```
+
+### Container Management Script
+
+The `manage_container.py` script provides a comprehensive CLI for managing MR Validator containers with configuration validation, health checks, and testing capabilities.
+
+**📖 Complete Documentation:** [CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md](./CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md)
+
+**Features:**
+- ✓ Build, start, stop, restart operations
+- ✓ Configuration validation with detailed error/warning reporting
+- ✓ Container status monitoring with resource usage
+- ✓ Live log streaming
+- ✓ Test webhook functionality
+- ✓ Rich CLI output with tables and colors (optional)
+
+**Installation:**
+
+```bash
+# Install Python dependencies
+pip install python-dotenv docker
+
+# Optional: Install rich for enhanced output
+pip install rich==12.6.0
+```
+
+**Quick Start:**
+
+```bash
+# 1. Create configuration
+cp .env.example mrproper.env
+# Edit mrproper.env with your settings
+
+# 2. Validate configuration
+python manage_container.py config
+
+# 3. Build images
+python manage_container.py build
+
+# 4. Start container
+python manage_container.py start
+
+# 5. Check status
+python manage_container.py status
+
+# 6. View logs
+python manage_container.py logs
+```
+
+**Quick Start:**
+
+```bash
+# 1. Validate configuration
+python manage_container.py config
+
+# 2. Build and start
+python manage_container.py build
+python manage_container.py start --yes
+
+# 3. Verify and test
+python manage_container.py status
+python manage_container.py test
+```
+
+**Common Commands:**
+
+```bash
+# View configuration and status
+python manage_container.py config
+python manage_container.py status
+
+# Manage container lifecycle
+python manage_container.py start --yes    # Start container
+python manage_container.py stop           # Stop container
+python manage_container.py restart        # Restart container
+
+# Monitor and debug
+python manage_container.py logs           # Follow logs
+python manage_container.py test           # Test webhook
+```
+
+**For complete documentation including:**
+- All command options and flags
+- 50+ detailed examples
+- Workflow diagrams
+- Automation templates (Systemd, Makefile, GitLab CI/CD)
+- Troubleshooting guide
+- Best practices
+
+**See:** [CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md](./CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md)
 
 ---
 
@@ -277,7 +370,7 @@ grep "Final rating" /mnt/nfs/mr-validator-logs/validations/**/**/*$REQ_ID*.log
 
 ```bash
 # Check exit code
-docker inspect mr-checker-42-12345678 --format='{{.State.ExitCode}}'
+docker inspect mr-rate-my-mr-42-12345678 --format='{{.State.ExitCode}}'
 
 # Exit codes:
 # 0 = Success
@@ -362,7 +455,7 @@ curl -H "PRIVATE-TOKEN: $GITLAB_ACCESS_TOKEN" \
 grep "bfa_url\|legacy_url" /path/to/log
 
 # Ensure BFA_HOST is set
-docker exec mrproper-webhook-vp-test env | grep BFA_HOST
+docker exec ratemymr-webhook-container env | grep BFA_HOST
 ```
 
 ### Debug Workflow
@@ -438,8 +531,8 @@ grep "Final rating" "$LOG_FILE"
 
 ```bash
 # Test 1: Docker image exists
-docker images | grep mr-checker-vp-test
-# Expected: mr-checker-vp-test   latest   abc123   1 hour ago   1.2GB
+docker images | grep ratemymr-validate-container
+# Expected: ratemymr-validate-container   latest   abc123   1 hour ago   1.2GB
 
 # Test 2: Webhook server responds
 curl -s http://localhost:9912/ | head -1
@@ -470,7 +563,7 @@ docker run --rm --env-file mrproper.env \
   -e REQUEST_ID=test_$(date +%s)_smoke001 \
   -e PROJECT_ID=org/repo \
   -e MR_IID=1 \
-  mr-checker-vp-test rate-my-mr --help
+  ratemymr-validate-container rate-my-mr --help
 
 # Expected: Usage information, exit 0
 ```
@@ -482,7 +575,7 @@ REQUEST_ID=test_$(date +%Y%m%d_%H%M%S)_$(openssl rand -hex 4)
 docker run --rm --env-file mrproper.env \
   -e REQUEST_ID=$REQUEST_ID \
   -v /mnt/nfs/mr-validator-logs:/home/docker/tmp/mr-validator-logs \
-  mr-checker-vp-test rate-my-mr org%2Frepo 42
+  ratemymr-validate-container rate-my-mr org%2Frepo 42
 
 echo "Check logs: grep '$REQUEST_ID' /mnt/nfs/mr-validator-logs/**/**/**/*.log"
 ```
@@ -518,7 +611,7 @@ docker ps -a | grep "mr-rate-my-mr"
 ```bash
 time docker run --rm --env-file mrproper.env \
   -e REQUEST_ID=perf_test_1 \
-  mr-checker-vp-test rate-my-mr org%2Flarge-mr 99
+  ratemymr-validate-container rate-my-mr org%2Flarge-mr 99
 
 # Expected: <5 minutes
 ```
@@ -540,14 +633,14 @@ time curl -s -X POST "http://${BFA_HOST}:8000/api/token" \
 **Test 1.1: Docker Image Build**
 ```bash
 # Build image
-docker build -t mr-checker-vp-test .
+docker build -t ratemymr-validate-container .
 # Expected: Build SUCCESS, no missing dependencies
 
 # Verification
-docker run mr-checker-vp-test python -c "import mrproper; print('OK')"
-docker run mr-checker-vp-test which rate-my-mr
-docker run mr-checker-vp-test which mrproper-clang-format
-docker run mr-checker-vp-test which mrproper-message
+docker run ratemymr-validate-container python -c "import mrproper; print('OK')"
+docker run ratemymr-validate-container which rate-my-mr
+docker run ratemymr-validate-container which mrproper-clang-format
+docker run ratemymr-validate-container which mrproper-message
 
 # Success Criteria:
 # - Image builds without errors
@@ -691,7 +784,7 @@ EOF
 # Trigger validation
 docker run --env-file mrproper.env \
   --env REQUEST_ID=test_$(date +%Y%m%d_%H%M%S_%N) \
-  mr-checker-vp-test rate-my-mr \
+  ratemymr-validate-container rate-my-mr \
   <project-name> <mr-iid>
 
 # Check logs
@@ -777,7 +870,7 @@ EOF
 # Trigger validation
 docker run --env-file mrproper.env \
   --env REQUEST_ID=test_$(date +%Y%m%d_%H%M%S_%N) \
-  mr-checker-vp-test rate-my-mr \
+  ratemymr-validate-container rate-my-mr \
   <project-name> <mr-iid>
 
 # Expected Logs:
@@ -925,7 +1018,7 @@ docker run --env-file mrproper.env ...
 ```bash
 docker run --env-file mrproper.env \
   --env REQUEST_ID=test_$(date +%Y%m%d_%H%M%S_%N) \
-  mr-checker-vp-test mrproper-clang-format \
+  ratemymr-validate-container mrproper-clang-format \
   <project-name> <mr-iid>
 
 # Success Criteria:
@@ -955,7 +1048,7 @@ docker run --env-file mrproper.env \
 ```bash
 docker run --env-file mrproper.env \
   --env REQUEST_ID=test_$(date +%Y%m%d_%H%M%S_%N) \
-  mr-checker-vp-test mrproper-message \
+  ratemymr-validate-container mrproper-message \
   <project-name> <mr-iid>
 
 # Success Criteria:
@@ -1264,7 +1357,7 @@ set -e
 echo "=== Quick Test Suite ==="
 
 echo "Test 1: Docker image exists"
-docker images | grep mr-checker-vp-test || exit 1
+docker images | grep ratemymr-validate-container || exit 1
 
 echo "Test 2: Webhook server responds"
 curl -s http://localhost:9912/ >/dev/null || exit 1
@@ -1276,7 +1369,7 @@ echo "Test 4: Log directory writable"
 test -w /home/docker/tmp/mr-validator-logs || exit 1
 
 echo "Test 5: Run rate-my-mr (dry run)"
-docker run mr-checker-vp-test rate-my-mr --help || exit 1
+docker run ratemymr-validate-container rate-my-mr --help || exit 1
 
 echo "=== All tests passed ==="
 ```
@@ -1381,18 +1474,18 @@ docker system prune -f
 
 **Restart webhook server:**
 ```bash
-docker restart mrproper-webhook-vp-test
+docker restart ratemymr-webhook-container
 
 # Or full restart
-docker stop mrproper-webhook-vp-test
-docker rm mrproper-webhook-vp-test
+docker stop ratemymr-webhook-container
+docker rm ratemymr-webhook-container
 ./start-server
 ```
 
 **Rebuild images:**
 ```bash
 ./build-docker-images --no-cache
-docker restart mrproper-webhook-vp-test
+docker restart ratemymr-webhook-container
 ```
 
 ### Backup Strategy
@@ -1421,10 +1514,10 @@ flowchart TD
     C --> D{Tests pass?}
     D -->|No| E[Fix issues<br/>Review build logs]
     E --> C
-    D -->|Yes| F[4. Stop webhook server<br/>docker stop mrproper-webhook]
+    D -->|Yes| F[4. Stop webhook server<br/>docker stop ratemymr-webhook-container]
     F --> G[5. Backup config<br/>cp mrproper.env .backup]
     G --> H[6. Deploy new images<br/>docker tag :latest]
-    H --> I[7. Start webhook server<br/>docker start mrproper-webhook]
+    H --> I[7. Start webhook server<br/>docker start ratemymr-webhook-container]
     I --> J[8. Verify health<br/>curl localhost:9912]
     J --> K{Healthy?}
     K -->|No| L[✗ Rollback<br/>Restore from backup]
@@ -1457,17 +1550,17 @@ git pull origin main
 ./build-docker-images
 
 # 3. Test
-docker run --rm mr-checker-vp-test rate-my-mr --help
+docker run --rm ratemymr-validate-container rate-my-mr --help
 
 # 4. Deploy
-docker stop mrproper-webhook-vp-test
+docker stop ratemymr-webhook-container
 cp mrproper.env mrproper.env.backup
 # Make any config changes
 ./start-server
 
 # 5. Verify
 curl http://localhost:9912/
-docker logs mrproper-webhook-vp-test --tail 20
+docker logs ratemymr-webhook-container --tail 20
 
 # 6. Monitor first few validations
 tail -f /mnt/nfs/mr-validator-logs/webhook/*/webhook-server.log
