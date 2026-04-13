@@ -4,47 +4,49 @@ Technical documentation for developers and system architects.
 
 ## Table of Contents
 
-- [System Overview](#system-overview)
-  - [Request Flow](#request-flow)
-- [Component Architecture](#component-architecture)
-  - [Directory Structure](#directory-structure)
-  - [Component Responsibilities](#component-responsibilities)
-  - [Routing Logic](#routing-logic)
-- [LLM Integration](#llm-integration)
-  - [JWT Token Flow](#jwt-token-flow)
-  - [Request Transformation](#request-transformation)
-  - [Response Transformation](#response-transformation)
-- [Configuration System](#configuration-system)
-  - [Loading Priority](#loading-priority)
-  - [config_loader.py](#config_loaderpy)
-  - [Feature Flag Usage](#feature-flag-usage)
-- [Logging System](#logging-system)
-  - [Structured Format](#structured-format)
-  - [Module Name Mapping](#module-name-mapping)
-  - [Child Logger Configuration](#child-logger-configuration)
-  - [Directory Structure](#directory-structure-1)
-- [Analysis Pipeline](#analysis-pipeline)
-  - [Pipeline Steps](#pipeline-steps)
-  - [Rating Algorithm](#rating-algorithm)
-- [GitLab API Integration](#gitlab-api-integration)
-  - [Key Functions](#key-functions)
-  - [Comment Update Logic](#comment-update-logic)
-- [Security Model](#security-model)
-  - [Authentication Methods](#authentication-methods)
-  - [Token Security](#token-security)
-  - [Container Isolation](#container-isolation)
-- [Performance Metrics](#performance-metrics)
-  - [Optimization Strategies](#optimization-strategies)
-- [Error Handling](#error-handling)
-  - [Retry Logic](#retry-logic)
-  - [Graceful Degradation](#graceful-degradation)
-- [Adding New Features](#adding-new-features)
-  - [1. Add New Analysis Module](#1-add-new-analysis-module)
-  - [2. Register Logger](#2-register-logger)
-  - [3. Add Module Name Mapping](#3-add-module-name-mapping)
-  - [4. Add Feature Flag](#4-add-feature-flag)
-  - [5. Integrate in Pipeline](#5-integrate-in-pipeline)
-- [Related Documentation](#related-documentation)
+- [MR Validator - Architecture \& Technical Guide](#mr-validator---architecture--technical-guide)
+  - [Table of Contents](#table-of-contents)
+  - [System Overview](#system-overview)
+    - [Request Flow](#request-flow)
+  - [Component Architecture](#component-architecture)
+    - [Directory Structure](#directory-structure)
+    - [Component Responsibilities](#component-responsibilities)
+  - [LLM Integration](#llm-integration)
+    - [Routing Logic](#routing-logic)
+    - [JWT Token Flow](#jwt-token-flow)
+    - [Request Transformation](#request-transformation)
+    - [Response Transformation](#response-transformation)
+  - [Configuration System](#configuration-system)
+    - [Loading Priority](#loading-priority)
+    - [config\_loader.py](#config_loaderpy)
+    - [Feature Flag Usage](#feature-flag-usage)
+  - [Logging System](#logging-system)
+    - [Structured Format](#structured-format)
+    - [Module Name Mapping](#module-name-mapping)
+    - [Child Logger Configuration](#child-logger-configuration)
+    - [Directory Structure](#directory-structure-1)
+  - [Analysis Pipeline](#analysis-pipeline)
+    - [Pipeline Steps](#pipeline-steps)
+    - [Rating Algorithm](#rating-algorithm)
+  - [GitLab API Integration](#gitlab-api-integration)
+    - [Key Functions](#key-functions)
+    - [Comment Update Logic](#comment-update-logic)
+  - [Security Model](#security-model)
+    - [Authentication Methods](#authentication-methods)
+    - [Token Security](#token-security)
+    - [Container Isolation](#container-isolation)
+  - [Performance Metrics](#performance-metrics)
+    - [Optimization Strategies](#optimization-strategies)
+  - [Error Handling](#error-handling)
+    - [Retry Logic](#retry-logic)
+    - [Graceful Degradation](#graceful-degradation)
+  - [Adding New Features](#adding-new-features)
+    - [1. Add New Analysis Module](#1-add-new-analysis-module)
+    - [2. Register Logger](#2-register-logger)
+    - [3. Add Module Name Mapping](#3-add-module-name-mapping)
+    - [4. Add Feature Flag](#4-add-feature-flag)
+    - [5. Integrate in Pipeline](#5-integrate-in-pipeline)
+  - [Related Documentation](#related-documentation)
 
 ---
 
@@ -438,7 +440,7 @@ stateDiagram-v2
         LOCAnalysis --> LintCheck
         LintCheck: [!] Lint Disables
         LintCheck --> SecurityScan
-        SecurityScan: 🛡️ Bandit Scan
+        SecurityScan: [SHIELD] Bandit Scan
         SecurityScan --> Complexity
         Complexity: 🔄 Cyclomatic CC
     }
@@ -535,7 +537,7 @@ flowchart TD
 
     C --> E{[CHART] Content<br/>changed?}
     E -->|"[OK] Different"| F[[EDIT] PUT /notes/:id<br/>Update existing comment]
-    E -->|"[X] Same"| G[⏭️ Skip update<br/>Save API call]
+    E -->|"[X] Same"| G[[SKIP] Skip update<br/>Save API call]
 
     D --> H[[OK] New discussion created]
     F --> I[[OK] Comment updated]
