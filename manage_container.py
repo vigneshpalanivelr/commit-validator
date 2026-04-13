@@ -1382,7 +1382,7 @@ Examples:
   %(prog)s test --validator mrproper-message  # Test message validator
   %(prog)s remove                   # Remove container/images (interactive)
 
-For more information, see README.md and OPERATIONS.md
+For more information, see README.md and COMPLETE_GUIDE.md
         """
     )
 

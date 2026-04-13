@@ -703,4 +703,4 @@ if is_feature_enabled(config, 'new_analysis'):
 ## Related Documentation
 
 - [README.md](./README.md) - User & Operator Guide
-- [OPERATIONS.md](./OPERATIONS.md) - DevOps & Maintenance Guide
+- [COMPLETE_GUIDE.md](./COMPLETE_GUIDE.md) - Part 4: Operations & Maintenance

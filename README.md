@@ -110,7 +110,7 @@ python manage_container.py status
 - ✓ Integrated testing capabilities
 - ✓ Rich CLI output with colors and tables
 
-**📖 Complete Documentation:** [CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md](./CONTAINER_MANAGEMENT_COMPLETE_GUIDE.md)
+**📖 Complete Documentation:** [COMPLETE_GUIDE.md](./COMPLETE_GUIDE.md) - Part 3: Container Management CLI
 
 **Quick References:**
 - Quick commands cheat sheet
@@ -818,8 +818,8 @@ grep "severity=" /path/to/log.log | awk -F '|' '{print $3, $5, $6}'
 | Document | Purpose |
 |----------|---------|
 | [README.md](./README.md) | User & Operator Guide |
+| [COMPLETE_GUIDE.md](./COMPLETE_GUIDE.md) | Complete Operational Guide (deployment, container management, operations, API specs) |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Developer & Technical Guide |
-| [OPERATIONS.md](./OPERATIONS.md) | DevOps & Maintenance Guide |
 
 ---
 
