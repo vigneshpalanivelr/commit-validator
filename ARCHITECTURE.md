@@ -197,7 +197,7 @@ flowchart TD
     B -->|"[X] No"| D[📡 Legacy Direct Mode]
 
     C --> E[🔑 Get JWT Token<br/>POST /api/token]
-    E --> F[🔄 Transform Request<br/>Add metadata fields]
+    E --> F[[~] Transform Request<br/>Add metadata fields]
     F --> G[📨 POST /api/rate-my-mr<br/>Authorization: Bearer]
     G --> H[✨ Transform Response<br/>Extract summary_text]
 
@@ -442,7 +442,7 @@ stateDiagram-v2
         LintCheck --> SecurityScan
         SecurityScan: [SHIELD] Bandit Scan
         SecurityScan --> Complexity
-        Complexity: 🔄 Cyclomatic CC
+        Complexity: [~] Cyclomatic CC
     }
 
     state "[>>] Reporting" as Report {
