@@ -206,7 +206,7 @@ def main():
     for var in required_env_vars:
         value = os.environ.get(var)
         if value:
-            logger.info(f"  ✓ {var} = {value[:15]}..." if len(value) > 15 else f"  ✓ {var} = {value}")
+            logger.info(f"  [v] {var} = {value[:15]}..." if len(value) > 15 else f"  [v] {var} = {value}")
         else:
             logger.error(f"  ✗ {var} = NOT SET (REQUIRED!)")
             raise EnvironmentError(f"Required environment variable {var} is not set")
@@ -216,9 +216,9 @@ def main():
         if value:
             # Mask sensitive values
             if 'TOKEN' in var or 'KEY' in var:
-                logger.info(f"  ✓ {var} = {value[:15]}...")
+                logger.info(f"  [v] {var} = {value[:15]}...")
             else:
-                logger.info(f"  ✓ {var} = {value}")
+                logger.info(f"  [v] {var} = {value}")
         else:
             logger.info(f"  - {var} = NOT SET (optional)")
 

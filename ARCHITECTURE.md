@@ -53,7 +53,7 @@ Technical documentation for developers and system architects.
 ```mermaid
 flowchart TB
     subgraph GitLab["◆ GitLab"]
-        A[▸ MR Event]
+        A[> MR Event]
     end
 
     subgraph Webhook["◉ Webhook Server :9912"]
@@ -190,9 +190,9 @@ commit-validator/
 
 ```mermaid
 flowchart TD
-    A[📤 send_request] --> B{🔍 BFA_HOST<br/>configured?}
-    B -->|"✅ Yes"| C[🤖 LLM Adapter Mode]
-    B -->|"❌ No"| D[📡 Legacy Direct Mode]
+    A[📤 send_request] --> B{[?] BFA_HOST<br/>configured?}
+    B -->|"[OK] Yes"| C[🤖 LLM Adapter Mode]
+    B -->|"[X] No"| D[📡 Legacy Direct Mode]
 
     C --> E[🔑 Get JWT Token<br/>POST /api/token]
     E --> F[🔄 Transform Request<br/>Add metadata fields]
@@ -281,9 +281,9 @@ Headers: Authorization: Bearer {token}
 
 ```mermaid
 flowchart LR
-    A[📋 Default Config<br/>All features enabled] --> B[📁 Repo Config<br/>.rate-my-mr.yaml]
+    A[# Default Config<br/>All features enabled] --> B[📁 Repo Config<br/>.rate-my-mr.yaml]
     B --> C[🔀 Deep Merge<br/>Override defaults]
-    C --> D[✅ Final Config<br/>Applied to pipeline]
+    C --> D[[OK] Final Config<br/>Applied to pipeline]
 
     classDef default fill:#f5f5f5,stroke:#e0e0e0,color:#333
     classDef repo fill:#fff8dc,stroke:#e8d890,color:#333
@@ -420,23 +420,23 @@ stateDiagram-v2
     [*] --> LoadConfig: Start Validation
 
     state "📁 Configuration" as Config {
-        LoadConfig: 📋 Load .rate-my-mr.yaml
+        LoadConfig: # Load .rate-my-mr.yaml
         LoadConfig --> CreateDiff
         CreateDiff: 📊 Generate Git Diff
     }
 
     state "🤖 AI Analysis (Conditional)" as AI {
         CreateDiff --> AISummary
-        AISummary: 📝 Generate Summary
+        AISummary: [NOTE] Generate Summary
         AISummary --> AICodeReview
-        AICodeReview: 🔍 Code Review
+        AICodeReview: [?] Code Review
     }
 
     state "📈 Metrics Analysis (Conditional)" as Metrics {
         AICodeReview --> LOCAnalysis
         LOCAnalysis: 📏 Lines of Code
         LOCAnalysis --> LintCheck
-        LintCheck: ⚠️ Lint Disables
+        LintCheck: [!] Lint Disables
         LintCheck --> SecurityScan
         SecurityScan: 🛡️ Bandit Scan
         SecurityScan --> Complexity
@@ -528,23 +528,23 @@ def update_discussion(proj, mriid, header, body, must_not_be_resolved):
 
 ```mermaid
 flowchart TD
-    A[📋 Fetch All MR Discussions<br/>GET /discussions] --> B{🔍 Found existing<br/>Rate My MR comment?}
+    A[# Fetch All MR Discussions<br/>GET /discussions] --> B{[?] Found existing<br/>Rate My MR comment?}
 
-    B -->|"✅ Yes - Update"| C[📝 Compare Content]
-    B -->|"❌ No - Create"| D[📨 POST /discussions<br/>Create new thread]
+    B -->|"[OK] Yes - Update"| C[[NOTE] Compare Content]
+    B -->|"[X] No - Create"| D[📨 POST /discussions<br/>Create new thread]
 
     C --> E{📊 Content<br/>changed?}
-    E -->|"✅ Different"| F[✏️ PUT /notes/:id<br/>Update existing comment]
-    E -->|"❌ Same"| G[⏭️ Skip update<br/>Save API call]
+    E -->|"[OK] Different"| F[✏️ PUT /notes/:id<br/>Update existing comment]
+    E -->|"[X] Same"| G[⏭️ Skip update<br/>Save API call]
 
-    D --> H[✅ New discussion created]
-    F --> I[✅ Comment updated]
-    G --> J[✅ No action needed]
+    D --> H[[OK] New discussion created]
+    F --> I[[OK] Comment updated]
+    G --> J[[OK] No action needed]
 
     H --> K{⭐ Score >= 3?}
     I --> K
-    K -->|"✅ Pass"| L[🟢 Set resolved = true]
-    K -->|"❌ Fail"| M[🔴 Set resolved = false]
+    K -->|"[OK] Pass"| L[🟢 Set resolved = true]
+    K -->|"[X] Fail"| M[[!] Set resolved = false]
 
     classDef fetch fill:#e3f2fd,stroke:#b3d4f7,color:#333
     classDef decision fill:#fff8dc,stroke:#e8d890,color:#333

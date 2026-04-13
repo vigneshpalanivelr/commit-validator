@@ -110,7 +110,7 @@ python manage_container.py status
 - ✓ Integrated testing capabilities
 - ✓ Rich CLI output with colors and tables
 
-**📖 Complete Documentation:** [COMPLETE_GUIDE.md](./COMPLETE_GUIDE.md) - Part 3: Container Management CLI
+**[Doc] Complete Documentation:** [COMPLETE_GUIDE.md](./COMPLETE_GUIDE.md) - Part 3: Container Management CLI
 
 **Quick References:**
 - Quick commands cheat sheet
@@ -426,7 +426,7 @@ rating:
 
 ```mermaid
 flowchart LR
-    A[▸ MR Diff<br/>git diff output] --> B[◎ AI Summary<br/>LLM generates<br/>brief overview]
+    A[> MR Diff<br/>git diff output] --> B[◎ AI Summary<br/>LLM generates<br/>brief overview]
     A --> C[◎ Code Review<br/>LLM identifies<br/>issues & improvements]
     A --> D[▤ LOC Analysis<br/>Lines added/removed<br/>Change size rating]
     A --> E[⚙ Lint Check<br/>New disable statements<br/>Code quality flags]

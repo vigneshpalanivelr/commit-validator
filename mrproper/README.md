@@ -2,7 +2,7 @@
 
 The MRProper package provides the core validation functionality for merge request quality checks. It serves as the engine that powers all validation types including code formatting, commit message validation, and AI-powered quality assessment.
 
-## 📋 Table of Contents
+## # Table of Contents
 
 - [Architecture Overview](#architecture-overview)
 - [Package Structure](#package-structure)

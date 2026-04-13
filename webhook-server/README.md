@@ -2,7 +2,7 @@
 
 The webhook server is a Tornado-based web application that receives GitLab merge request events and triggers validation checks. It acts as the entry point for the MR validation pipeline.
 
-## 📋 Table of Contents
+## # Table of Contents
 
 - [Architecture Overview](#architecture-overview)
 - [Components](#components)

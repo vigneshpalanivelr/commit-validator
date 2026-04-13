@@ -1569,7 +1569,7 @@ flowchart TD
     H --> I[7. Start webhook server<br/>docker start ratemymr-webhook-container]
     I --> J[8. Verify health<br/>curl localhost:9912]
     J --> K{Healthy?}
-    K -->|No| L[✗ Rollback<br/>Restore from backup]
+    K -->|No| L[[x] Rollback<br/>Restore from backup]
     K -->|Yes| M[✓ Done<br/>Upgrade complete]
 
     classDef prepare fill:#d4e5f7,color:#333,stroke:#a8c8e8
@@ -1750,11 +1750,11 @@ docker exec ratemymr-webhook-container env | grep BFA_HOST
 
 ```mermaid
 flowchart TD
-    A[▸ User Reports Issue<br/>MR not validated] --> B[1. Get MR IID<br/>from GitLab URL]
+    A[> User Reports Issue<br/>MR not validated] --> B[1. Get MR IID<br/>from GitLab URL]
     B --> C[2. Find REQUEST_ID<br/>grep webhook-server.log]
     C --> D[3. Find validator log<br/>validations/DATE/PROJECT/mr-IID/]
     D --> E{Log exists?}
-    E -->|No| F[✗ Container never started<br/>Check Docker daemon]
+    E -->|No| F[[x] Container never started<br/>Check Docker daemon]
     E -->|Yes| G[4. Check for errors<br/>grep ERROR|WARN]
     G --> H{Error type?}
     H -->|Auth 401| I[✓ Check tokens<br/>GITLAB_ACCESS_TOKEN<br/>JWT token validity]
@@ -1918,7 +1918,7 @@ time curl -s -X POST "http://${BFA_HOST}:8000/api/token" \
 ### Complete Test Suite Reference
 
 <details>
-<summary><b>📋 Complete Test Suite Reference (Click to expand - 650+ lines, 44+ tests)</b></summary>
+<summary><b># Complete Test Suite Reference (Click to expand - 650+ lines, 44+ tests)</b></summary>
 
 #### Test Suite 1: Infrastructure Tests
 
@@ -2456,9 +2456,9 @@ cat /home/docker/tmp/mr-validator-logs/rate-my-mr-<request-id>.log
 ## Test Results
 
 ### Suite 1: Infrastructure Tests
-- [✅/❌] Test 1.1: Docker Image Build
-- [✅/❌] Test 1.2: Webhook Server Startup
-- [✅/❌] Test 1.3: Log Directory Setup
+- [[OK]/[X]] Test 1.1: Docker Image Build
+- [[OK]/[X]] Test 1.2: Webhook Server Startup
+- [[OK]/[X]] Test 1.3: Log Directory Setup
 
 ... (continue for all tests)
 
@@ -2510,16 +2510,16 @@ cat /home/docker/tmp/mr-validator-logs/rate-my-mr-<request-id>.log
 #### Success Criteria Summary
 
 **System is production-ready when**:
-- ✅ All infrastructure tests pass
-- ✅ All webhook tests pass
-- ✅ All three validators work correctly
-- ✅ Both legacy and new adapter modes work
-- ✅ Error handling is robust
-- ✅ Logging and debugging is comprehensive
-- ✅ Performance is acceptable (<5 min for typical MR)
-- ✅ Token reuse working (1 token call per MR)
-- ✅ No memory leaks or resource issues
-- ✅ Documentation is complete and accurate
+- [OK] All infrastructure tests pass
+- [OK] All webhook tests pass
+- [OK] All three validators work correctly
+- [OK] Both legacy and new adapter modes work
+- [OK] Error handling is robust
+- [OK] Logging and debugging is comprehensive
+- [OK] Performance is acceptable (<5 min for typical MR)
+- [OK] Token reuse working (1 token call per MR)
+- [OK] No memory leaks or resource issues
+- [OK] Documentation is complete and accurate
 
 **Estimated Time**: 4-6 hours for complete test suite
 
@@ -2985,21 +2985,21 @@ case $EXIT_CODE in
     echo "✓ Success"
     ;;
   1)
-    echo "✗ General error"
+    echo "[x] General error"
     ;;
   2)
-    echo "✗ Configuration error - check mrproper.env"
+    echo "[x] Configuration error - check mrproper.env"
     python manage_container.py config
     ;;
   3)
-    echo "✗ Docker error - check Docker daemon"
+    echo "[x] Docker error - check Docker daemon"
     docker info
     ;;
   4)
-    echo "✗ User cancelled"
+    echo "[x] User cancelled"
     ;;
   *)
-    echo "✗ Unknown error: $EXIT_CODE"
+    echo "[x] Unknown error: $EXIT_CODE"
     ;;
 esac
 
