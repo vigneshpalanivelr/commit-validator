@@ -202,7 +202,7 @@ flowchart TD
     D --> I[📨 POST /generate<br/>Direct AI call]
     I --> J[📥 Raw Response<br/>No transformation]
 
-    H --> K[🎯 Return to caller]
+    H --> K[[>>] Return to caller]
     J --> K
 
     classDef decision fill:#fff8dc,stroke:#e8d890,color:#333
@@ -422,7 +422,7 @@ stateDiagram-v2
     state "📁 Configuration" as Config {
         LoadConfig: # Load .rate-my-mr.yaml
         LoadConfig --> CreateDiff
-        CreateDiff: 📊 Generate Git Diff
+        CreateDiff: [CHART] Generate Git Diff
     }
 
     state "🤖 AI Analysis (Conditional)" as AI {
@@ -432,7 +432,7 @@ stateDiagram-v2
         AICodeReview: [?] Code Review
     }
 
-    state "📈 Metrics Analysis (Conditional)" as Metrics {
+    state "[METRICS] Metrics Analysis (Conditional)" as Metrics {
         AICodeReview --> LOCAnalysis
         LOCAnalysis: 📏 Lines of Code
         LOCAnalysis --> LintCheck
@@ -443,9 +443,9 @@ stateDiagram-v2
         Complexity: 🔄 Cyclomatic CC
     }
 
-    state "🎯 Reporting" as Report {
+    state "[>>] Reporting" as Report {
         Complexity --> Rating
-        Rating: ⭐ Calculate Score
+        Rating: [*] Calculate Score
         Rating --> PostToGitLab
         PostToGitLab: 💬 Post Discussion
     }
@@ -533,17 +533,17 @@ flowchart TD
     B -->|"[OK] Yes - Update"| C[[NOTE] Compare Content]
     B -->|"[X] No - Create"| D[📨 POST /discussions<br/>Create new thread]
 
-    C --> E{📊 Content<br/>changed?}
-    E -->|"[OK] Different"| F[✏️ PUT /notes/:id<br/>Update existing comment]
+    C --> E{[CHART] Content<br/>changed?}
+    E -->|"[OK] Different"| F[[EDIT] PUT /notes/:id<br/>Update existing comment]
     E -->|"[X] Same"| G[⏭️ Skip update<br/>Save API call]
 
     D --> H[[OK] New discussion created]
     F --> I[[OK] Comment updated]
     G --> J[[OK] No action needed]
 
-    H --> K{⭐ Score >= 3?}
+    H --> K{[*] Score >= 3?}
     I --> K
-    K -->|"[OK] Pass"| L[🟢 Set resolved = true]
+    K -->|"[OK] Pass"| L[[OK] Set resolved = true]
     K -->|"[X] Fail"| M[[!] Set resolved = false]
 
     classDef fetch fill:#e3f2fd,stroke:#b3d4f7,color:#333
