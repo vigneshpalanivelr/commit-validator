@@ -192,17 +192,17 @@ commit-validator/
 
 ```mermaid
 flowchart TD
-    A[📤 send_request] --> B{[?] BFA_HOST<br/>configured?}
-    B -->|"[OK] Yes"| C[🤖 LLM Adapter Mode]
-    B -->|"[X] No"| D[📡 Legacy Direct Mode]
+    A[[OUT] send_request] --> B{[?] BFA_HOST<br/>configured?}
+    B -->|"[OK] Yes"| C[[BOT] LLM Adapter Mode]
+    B -->|"[X] No"| D[[API] Legacy Direct Mode]
 
-    C --> E[🔑 Get JWT Token<br/>POST /api/token]
+    C --> E[[KEY] Get JWT Token<br/>POST /api/token]
     E --> F[[~] Transform Request<br/>Add metadata fields]
-    F --> G[📨 POST /api/rate-my-mr<br/>Authorization: Bearer]
-    G --> H[✨ Transform Response<br/>Extract summary_text]
+    F --> G[[POST] POST /api/rate-my-mr<br/>Authorization: Bearer]
+    G --> H[[NEW] Transform Response<br/>Extract summary_text]
 
-    D --> I[📨 POST /generate<br/>Direct AI call]
-    I --> J[📥 Raw Response<br/>No transformation]
+    D --> I[[POST] POST /generate<br/>Direct AI call]
+    I --> J[[IN] Raw Response<br/>No transformation]
 
     H --> K[[>>] Return to caller]
     J --> K
@@ -283,8 +283,8 @@ Headers: Authorization: Bearer {token}
 
 ```mermaid
 flowchart LR
-    A[# Default Config<br/>All features enabled] --> B[📁 Repo Config<br/>.rate-my-mr.yaml]
-    B --> C[🔀 Deep Merge<br/>Override defaults]
+    A[# Default Config<br/>All features enabled] --> B[[DIR] Repo Config<br/>.rate-my-mr.yaml]
+    B --> C[[MERGE] Deep Merge<br/>Override defaults]
     C --> D[[OK] Final Config<br/>Applied to pipeline]
 
     classDef default fill:#f5f5f5,stroke:#e0e0e0,color:#333
@@ -421,13 +421,13 @@ def configure_child_loggers():
 stateDiagram-v2
     [*] --> LoadConfig: Start Validation
 
-    state "📁 Configuration" as Config {
+    state "[DIR] Configuration" as Config {
         LoadConfig: # Load .rate-my-mr.yaml
         LoadConfig --> CreateDiff
         CreateDiff: [CHART] Generate Git Diff
     }
 
-    state "🤖 AI Analysis (Conditional)" as AI {
+    state "[BOT] AI Analysis (Conditional)" as AI {
         CreateDiff --> AISummary
         AISummary: [NOTE] Generate Summary
         AISummary --> AICodeReview
@@ -436,7 +436,7 @@ stateDiagram-v2
 
     state "[METRICS] Metrics Analysis (Conditional)" as Metrics {
         AICodeReview --> LOCAnalysis
-        LOCAnalysis: 📏 Lines of Code
+        LOCAnalysis: [SIZE] Lines of Code
         LOCAnalysis --> LintCheck
         LintCheck: [!] Lint Disables
         LintCheck --> SecurityScan
@@ -449,7 +449,7 @@ stateDiagram-v2
         Complexity --> Rating
         Rating: [*] Calculate Score
         Rating --> PostToGitLab
-        PostToGitLab: 💬 Post Discussion
+        PostToGitLab: [MSG] Post Discussion
     }
 
     PostToGitLab --> [*]: Exit 0
@@ -533,7 +533,7 @@ flowchart TD
     A[# Fetch All MR Discussions<br/>GET /discussions] --> B{[?] Found existing<br/>Rate My MR comment?}
 
     B -->|"[OK] Yes - Update"| C[[NOTE] Compare Content]
-    B -->|"[X] No - Create"| D[📨 POST /discussions<br/>Create new thread]
+    B -->|"[X] No - Create"| D[[POST] POST /discussions<br/>Create new thread]
 
     C --> E{[CHART] Content<br/>changed?}
     E -->|"[OK] Different"| F[[EDIT] PUT /notes/:id<br/>Update existing comment]
